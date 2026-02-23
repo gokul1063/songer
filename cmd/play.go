@@ -20,6 +20,12 @@ var playCmd = &cobra.Command{
 	`,
 
 	Run: func(cmd *cobra.Command, args []string) {
+
+		if len(args) == 0 {
+			services.DisplaySong()
+			return
+		}
+
 		fmt.Println("play called")
 		fmt.Println(args[0])
 		services.PlaySong(args[0])

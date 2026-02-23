@@ -52,7 +52,13 @@ func playOnlineSong(songName string) {
 	playOfflineSong(songName)
 
 }
+
+func DisplaySong() {
+	internal.DisplaySong()
+}
+
 func PlaySong(songName string) error {
+
 	if exist := internal.IsFileExist(songName); exist {
 		playOfflineSong(songName)
 		return nil
