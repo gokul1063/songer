@@ -21,6 +21,7 @@ import (
 )
 
 func playOfflineSong(songName string) {
+	fmt.Println("file exist localy so lets play the local file")
 	fullName := configs.DataPath + songName + ".mp3"
 	cmd := exec.Command(
 		"mpv",
@@ -38,7 +39,18 @@ func playOfflineSong(songName string) {
 }
 
 func playOnlineSong(songName string) {
-	fmt.Println("pass")
+	fmt.Println("file does not exist so lets play via youtube.com")
+	songLink, err := fetchList(songName)
+	if err != nil {
+		internal.WriteLog("play.go", err)
+	}
+
+	if saved := downloadSong(songLink, songName); !saved {
+		fmt.Println("saved failed")
+	}
+
+	playOfflineSong(songName)
+
 }
 func PlaySong(songName string) error {
 	if exist := internal.IsFileExist(songName); exist {

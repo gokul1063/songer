@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"fmt"
 	"os"
 	"strings"
 
@@ -11,14 +12,17 @@ const songPath string = configs.DataPath
 
 func IsFileExist(songName string) bool {
 	entire, err := os.ReadDir(songPath)
+	songName = strings.ToLower(songName)
 
 	if err != nil {
 		WriteLog("local.go", err)
 	}
 
 	for _, entry := range entire {
+		fmt.Println(entry.Name())
 		if strings.Contains(entry.Name(), ".") {
-			if songName == entry.Name()[:len(entry.Name())-4] {
+			formatedName := strings.ToLower(entry.Name())[:len(entry.Name())-4]
+			if songName == formatedName {
 				return true
 			}
 		}

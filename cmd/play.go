@@ -17,7 +17,6 @@ var playCmd = &cobra.Command{
 	Long: `This command uses mpv as server 
 	if the songs exists locally it uses that 
 	else it download the songs form ytdlp and plays it 
-	
 	`,
 
 	Run: func(cmd *cobra.Command, args []string) {
