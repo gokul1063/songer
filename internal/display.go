@@ -3,6 +3,8 @@ package internal
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 )
 
 func DisplaySong() error {
@@ -21,4 +23,27 @@ func DisplaySong() error {
 
 	return nil
 
+}
+
+func SearchSong(songName string) string {
+	home := os.Getenv("HOME")
+
+	data, err := scanMusic(home)
+
+	if err != nil {
+		return ""
+	}
+
+	for _, values := range data {
+
+		substr := strings.TrimSuffix(values.Name, filepath.Ext(values.Name))
+		fmt.Printf("current song : %s\nsong Path :%s\n", values.Name, values.Path)
+		if strings.ToLower(substr) == strings.ToLower(songName) {
+
+			return values.Path
+		}
+
+	}
+
+	return ""
 }

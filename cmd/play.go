@@ -6,6 +6,7 @@ package cmd
 import (
 	"fmt"
 
+	"github.com/gokul1063/songer/internal"
 	"github.com/gokul1063/songer/services"
 	"github.com/spf13/cobra"
 )
@@ -21,6 +22,14 @@ var playCmd = &cobra.Command{
 
 	Run: func(cmd *cobra.Command, args []string) {
 
+		if offline {
+			fmt.Println("offline tag called ")
+			path := internal.SearchSong(args[0])
+			fmt.Printf("The path returned : %s ", path)
+			services.PlaySongTest1(path)
+			return
+		}
+
 		if len(args) == 0 {
 			services.DisplaySong()
 			return
@@ -33,6 +42,10 @@ var playCmd = &cobra.Command{
 	},
 }
 
+var offline bool
+
 func init() {
 	rootCmd.AddCommand(playCmd)
+	playCmd.Flags().BoolVarP(&offline, "offline", "o", false, "Play offline song test1")
+
 }
