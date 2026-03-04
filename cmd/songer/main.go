@@ -5,60 +5,74 @@ import (
 	"time"
 
 	"songer/internal/player"
+	"songer/internal/queue"
+	"songer/internal/youtube"
 )
 
 func main() {
 
-	fmt.Println("Starting Songer test")
+	socket := "/tmp/songer-mpv.sock"
+	baseDir := "/home/coder/.local/share/songer"
 
-	p := player.NewPlayer("/tmp/songer-mpv.sock")
+	fmt.Println("starting player")
+
+	p := player.NewPlayer(socket)
 
 	err := p.Start()
 	if err != nil {
-		fmt.Println("mpv start failed:", err)
+		fmt.Println("player start error:", err)
 		return
 	}
 
-	p.ListenEvents(func(e player.Event) {
-		fmt.Println("event:", e.Event)
-	})
-	fmt.Println("mpv started")
+	fmt.Println("player started")
 
-	err = p.Play("/home/coder/Desktop/m_pho/songs/Usure.mpga")
+	q := queue.New(p, baseDir)
+
+	fmt.Println("searching youtube...")
+
+	results, err := youtube.Search("lofi hip hop")
 	if err != nil {
-		fmt.Println("play failed:", err)
+		fmt.Println("search error:", err)
 		return
 	}
 
-	fmt.Println("playing song")
+	if len(results) == 0 {
+		fmt.Println("no results found")
+		return
+	}
 
-	time.Sleep(35 * time.Second)
+	fmt.Println("results found:", len(results))
 
-	err = p.Pause()
+	for i := 0; i < 5 && i < len(results); i++ {
+
+		v := results[i]
+
+		fmt.Println("adding:", v.Title)
+
+		q.Add(v)
+	}
+
+	fmt.Println("starting queue")
+
+	err = q.Start()
 	if err != nil {
-		fmt.Println("pause failed:", err)
+		fmt.Println("queue error:", err)
 		return
 	}
 
-	fmt.Println("paused")
+	fmt.Println("playing first song")
 
-	time.Sleep(3 * time.Second)
+	// simple runtime loop to inspect player state
 
-	err = p.Pause()
-	if err != nil {
-		fmt.Println("resume failed:", err)
-		return
+	for {
+
+		title, _ := p.GetTitle()
+		cur, _ := p.GetCurrentTime()
+		dur, _ := p.GetDuration()
+
+		fmt.Println("title:", title)
+		fmt.Println("time:", cur, "/", dur)
+
+		time.Sleep(5 * time.Second)
 	}
-
-	fmt.Println("resumed")
-
-	time.Sleep(5 * time.Second)
-
-	err = p.Stop()
-	if err != nil {
-		fmt.Println("stop failed:", err)
-		return
-	}
-
-	fmt.Println("stopped")
 }

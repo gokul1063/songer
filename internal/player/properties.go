@@ -42,51 +42,9 @@ func (p *Player) GetProperty(property string) (interface{}, error) {
 	return resp["data"], nil
 }
 
-func (p *Player) GetCurrentTime() (float64, error) {
+func (p *Player) getStringProperty(property string) (string, error) {
 
-	v, err := p.GetProperty("time-pos")
-	if err != nil {
-		return 0, err
-	}
-
-	if v == nil {
-		return 0, nil
-	}
-
-	return v.(float64), nil
-}
-
-func (p *Player) GetDuration() (float64, error) {
-
-	v, err := p.GetProperty("duration")
-	if err != nil {
-		return 0, err
-	}
-
-	if v == nil {
-		return 0, nil
-	}
-
-	return v.(float64), nil
-}
-
-func (p *Player) IsPaused() (bool, error) {
-
-	v, err := p.GetProperty("pause")
-	if err != nil {
-		return false, err
-	}
-
-	if v == nil {
-		return false, nil
-	}
-
-	return v.(bool), nil
-}
-
-func (p *Player) GetTitle() (string, error) {
-
-	v, err := p.GetProperty("media-title")
+	v, err := p.GetProperty(property)
 	if err != nil {
 		return "", err
 	}
@@ -95,5 +53,73 @@ func (p *Player) GetTitle() (string, error) {
 		return "", nil
 	}
 
-	return v.(string), nil
+	switch val := v.(type) {
+
+	case string:
+		return val, nil
+
+	case map[string]interface{}:
+		if t, ok := val["title"].(string); ok {
+			return t, nil
+		}
+	}
+
+	return "", nil
+}
+
+func (p *Player) getFloatProperty(property string) (float64, error) {
+
+	v, err := p.GetProperty(property)
+	if err != nil {
+		return 0, err
+	}
+
+	if v == nil {
+		return 0, nil
+	}
+
+	switch val := v.(type) {
+
+	case float64:
+		return val, nil
+
+	case int:
+		return float64(val), nil
+	}
+
+	return 0, nil
+}
+
+func (p *Player) getBoolProperty(property string) (bool, error) {
+
+	v, err := p.GetProperty(property)
+	if err != nil {
+		return false, err
+	}
+
+	if v == nil {
+		return false, nil
+	}
+
+	if val, ok := v.(bool); ok {
+		return val, nil
+	}
+
+	return false, nil
+}
+
+func (p *Player) GetCurrentTime() (float64, error) {
+	return p.getFloatProperty("time-pos")
+}
+
+func (p *Player) GetDuration() (float64, error) {
+	return p.getFloatProperty("duration")
+}
+
+func (p *Player) IsPaused() (bool, error) {
+	return p.getBoolProperty("pause")
+}
+
+func (p *Player) GetTitle() (string, error) {
+	return p.getStringProperty("media-title")
 }
