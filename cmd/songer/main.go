@@ -2,29 +2,63 @@ package main
 
 import (
 	"fmt"
-	"os"
+	"time"
 
-	"songer/internal/config"
-	"songer/internal/logger"
+	"songer/internal/player"
 )
 
 func main() {
-	path := os.ExpandEnv("$HOME/.config/songer/config.json")
-	cfg, err := config.LoadConfig(path)
 
+	fmt.Println("Starting Songer test")
+
+	p := player.NewPlayer("/tmp/songer-mpv.sock")
+
+	err := p.Start()
 	if err != nil {
-		fmt.Println("failed to load config:", err)
-		os.Exit(1)
+		fmt.Println("mpv start failed:", err)
+		return
 	}
 
-	err = logger.InitLogger(cfg.LogFile)
+	p.ListenEvents(func(e player.Event) {
+		fmt.Println("event:", e.Event)
+	})
+	fmt.Println("mpv started")
 
+	err = p.Play("/home/coder/Desktop/m_pho/songs/Usure.mpga")
 	if err != nil {
-		fmt.Println("failed to initialize logger:", err)
-		os.Exit(1)
+		fmt.Println("play failed:", err)
+		return
 	}
 
-	logger.Info("main", "application started")
+	fmt.Println("playing song")
 
-	fmt.Println("Songer initialized")
+	time.Sleep(35 * time.Second)
+
+	err = p.Pause()
+	if err != nil {
+		fmt.Println("pause failed:", err)
+		return
+	}
+
+	fmt.Println("paused")
+
+	time.Sleep(3 * time.Second)
+
+	err = p.Pause()
+	if err != nil {
+		fmt.Println("resume failed:", err)
+		return
+	}
+
+	fmt.Println("resumed")
+
+	time.Sleep(5 * time.Second)
+
+	err = p.Stop()
+	if err != nil {
+		fmt.Println("stop failed:", err)
+		return
+	}
+
+	fmt.Println("stopped")
 }
