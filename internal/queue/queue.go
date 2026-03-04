@@ -95,3 +95,14 @@ func (q *Queue) Current() (youtube.Video, error) {
 
 	return q.items[q.index], nil
 }
+
+func (q *Queue) PeekNext() (youtube.Video, error) {
+
+	next := q.index + 1
+
+	if next >= len(q.items) {
+		return youtube.Video{}, errors.New("no next song")
+	}
+
+	return q.items[next], nil
+}
