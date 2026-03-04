@@ -503,3 +503,7 @@ Fields:
 Title
 Author
 URL
+
+logger format
+[TIMESTAMP] [LEVEL] [FUNCTION] message
+2026-03-04T15:32:10Z ERROR LoadConfig config file not found
