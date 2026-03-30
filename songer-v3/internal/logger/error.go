@@ -1,7 +1,6 @@
 package logger
 
 import (
-	"log/slog"
 	"runtime"
 )
 

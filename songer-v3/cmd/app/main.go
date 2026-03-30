@@ -1,9 +1,10 @@
 package main
 
 import (
+	"time"
 	"fmt"
+	"songer-v3/internal/executor"
 	"songer-v3/internal/logger"
-	"songer-v3/internal/workflow"
 )
 
 func main() {
@@ -13,13 +14,18 @@ func main() {
 		return
 	}
 
-	testFunction()
+	testExecutor()
 }
 
-func testFunction() {
-	workflow.Enter("testFunction")
+func testExecutor() {
+	cfg := executor.ExecConfig{
+		Timeout: 5 * time.Second,
+		Retries: 1,
+	}
 
-	// simulate work
+	res := executor.RunCommand("echo", []string{"Hello from executor"}, cfg)
 
-	workflow.Exit("testFunction", "success")
+	fmt.Println("STDOUT:", res.Stdout)
+	fmt.Println("STDERR:", res.Stderr)
+	fmt.Println("ERROR:", res.Err)
 }
