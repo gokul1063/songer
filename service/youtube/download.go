@@ -24,8 +24,8 @@ func isExist(filePath string) (bool, error){
 }
 
 func Download(videoID string) (string, error) {
-	workflow.Enter("YouTubeDownload")
-	defer workflow.Exit("YouTubeDownload", "done")
+	workflow.Enter("YouTubeDownload:" + videoID)
+	defer workflow.Exit("YouTubeDownload:"+videoID, "done")
 
 	err := os.MkdirAll(config.AppPaths.DownloadDir, os.ModePerm)
 	if err != nil {

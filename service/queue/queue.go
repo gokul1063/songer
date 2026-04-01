@@ -1,8 +1,8 @@
 package queue
 
 import (
-	"fmt"
 	"time"
+	"sync"
 
 	"songer-v3/internal/logger"
 	"songer-v3/internal/workflow"
@@ -12,6 +12,7 @@ import (
 )
 
 var q = &model.Queue{}
+var mu sync.Mutex
 
 func Add(song model.Song) {
 	workflow.Enter("QueueAdd")
@@ -24,19 +25,18 @@ func PlayNext() {
 	workflow.Enter("QueuePlayNext")
 	defer workflow.Exit("QueuePlayNext", "done")
 
+	mu.Lock()
+
 	if len(q.Upcoming) == 0 {
-		fmt.Println("Queue empty")
+		mu.Unlock()
 		return
 	}
 
 	next := q.Upcoming[0]
 	q.Upcoming = q.Upcoming[1:]
 
-	// move current to history
 	if q.Current != nil {
 		q.History = append(q.History, *q.Current)
-
-		// keep only last 30
 		if len(q.History) > 30 {
 			q.History = q.History[1:]
 		}
@@ -44,7 +44,8 @@ func PlayNext() {
 
 	q.Current = &next
 
-	// download + play
+	mu.Unlock()
+
 	path, err := youtube.Download(next.VideoID)
 	if err != nil {
 		logger.LogError(err)
@@ -57,7 +58,6 @@ func PlayNext() {
 		return
 	}
 }
-
 func StartAutoPlay() {
 	workflow.Enter("QueueAutoPlay")
 	defer workflow.Exit("QueueAutoPlay", "done")

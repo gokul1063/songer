@@ -22,9 +22,11 @@ func Play(filePath string) error {
 	cmd := exec.Command("mpv",
 		"--no-video",
 		"--input-ipc-server="+socketPath,
+		"--idle=yes",
+		"--force-window=no",
 		filePath,
 	)
-
+	
 	err := cmd.Start()
 	if err != nil {
 		logger.LogError(err)
