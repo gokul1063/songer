@@ -1,3 +1,3 @@
-module songer-v3
+module songer
 
 go 1.24.4

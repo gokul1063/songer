@@ -1,8 +1,2 @@
-# Ignore all log files
-logs/
-downloads/
-
-# Optional: ignore any .log anywhere
-*.log
-*.mp3
-timepass.sh
+songer
+*.test
