@@ -183,12 +183,7 @@ func runTUI(ctx context.Context, cfg config.Config, target search.Video) error {
 	}
 	defer player.Close()
 
-	queue, err := autoplay.NewClient().BuildQueue(ctx, target.ID, cfg.Autoplay.PerNode, cfg.Autoplay.Depth)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "autoplay error: %v\n", err)
-	}
-
 	fmt.Fprintf(os.Stderr, "♫ Now playing: %s\n", target.Title)
-	return tui.Run(ctx, player, target, queue, cfg.ThemeFor(cfg.UI.Theme))
+	return tui.Run(ctx, player, target, cfg.ThemeFor(cfg.UI.Theme), cfg.Autoplay.PerNode, cfg.Autoplay.Depth)
 }
 

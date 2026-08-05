@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"songer/pkg/autoplay"
 	"songer/pkg/config"
 	"songer/pkg/mpv"
 	"songer/pkg/search"
@@ -16,27 +17,42 @@ import (
 
 type waveTick struct{}
 
-type Model struct {
-	player    *mpv.Player
-	theme     config.Theme
-	current   search.Video
-	upcoming  []search.Video
-	queueIdx  int
-	state     mpv.State
-	wave      []float64
-	width     int
-	height    int
-	showHelp  bool
-	status    string
+type queueLoadedMsg struct {
+	videos []search.Video
 }
 
-func Run(ctx context.Context, player *mpv.Player, current search.Video, queue []search.Video, theme config.Theme) error {
+type queueFailedMsg struct {
+	err error
+}
+
+type Model struct {
+	player       *mpv.Player
+	theme        config.Theme
+	ctx          context.Context
+	current      search.Video
+	upcoming     []search.Video
+	queueIdx     int
+	state        mpv.State
+	wave         []float64
+	width        int
+	height       int
+	showHelp     bool
+	status       string
+	perNode      int
+	depth        int
+	queuePending bool
+	pendingSeed  string
+}
+
+func Run(ctx context.Context, player *mpv.Player, current search.Video, theme config.Theme, perNode, depth int) error {
 	m := Model{
 		player:   player,
 		theme:    theme,
+		ctx:      ctx,
 		current:  current,
-		upcoming: queue,
 		status:   "▶ " + current.Title,
+		perNode:  perNode,
+		depth:    depth,
 	}
 	m.wave = nextWave(waveCount(80))
 
@@ -68,11 +84,36 @@ func Run(ctx context.Context, player *mpv.Player, current search.Video, queue []
 }
 
 func (m Model) Init() tea.Cmd {
-	return waveCmd()
+	return tea.Batch(waveCmd(), m.queueCmd())
 }
 
 func waveCmd() tea.Cmd {
 	return tea.Tick(waveInterval, func(time.Time) tea.Msg { return waveTick{} })
+}
+
+// queueCmd fetches the suggested queue for the current song in a goroutine
+// and hands the result back to the event loop.
+func (m Model) queueCmd() tea.Cmd {
+	seed, perNode, depth := m.current.ID, m.perNode, m.depth
+	return func() tea.Msg {
+		videos, err := autoplay.NewClient().BuildQueue(m.ctx, seed, perNode, depth)
+		if err != nil {
+			return queueFailedMsg{err: err}
+		}
+		return queueLoadedMsg{videos: videos}
+	}
+}
+
+func (m Model) startQueueFetch() (Model, tea.Cmd) {
+	if m.current.ID == "" {
+		return m, nil
+	}
+	if m.queuePending && m.pendingSeed == m.current.ID {
+		return m, nil
+	}
+	m.queuePending = true
+	m.pendingSeed = m.current.ID
+	return m, m.queueCmd()
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -85,6 +126,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case waveTick:
 		m.wave = nextWave(waveCount(m.width))
 		return m, waveCmd()
+	case queueLoadedMsg:
+		m.queuePending = false
+		m.pendingSeed = ""
+		seen := map[string]bool{m.current.ID: true}
+		for _, v := range m.upcoming {
+			seen[v.ID] = true
+		}
+		for _, v := range msg.videos {
+			if v.ID == "" || seen[v.ID] {
+				continue
+			}
+			seen[v.ID] = true
+			m.upcoming = append(m.upcoming, v)
+		}
+		return m, nil
+	case queueFailedMsg:
+		m.queuePending = false
+		m.pendingSeed = ""
+		m.status = "autoplay: " + msg.err.Error()
+		return m, nil
 	case mpv.State:
 		m.state = msg
 		if msg.Ended {
@@ -169,7 +230,9 @@ func (m Model) advanceNext() (tea.Model, tea.Cmd) {
 	m.state.Ended = false
 	m.status = "▶ " + next.Title
 	m.player.Load(next.URL)
-	return m, nil
+	var fetch tea.Cmd
+	m, fetch = m.startQueueFetch()
+	return m, fetch
 }
 
 func (m Model) playSelected() (tea.Model, tea.Cmd) {
@@ -183,7 +246,9 @@ func (m Model) playSelected() (tea.Model, tea.Cmd) {
 	m.status = "▶ " + next.Title
 	m.queueIdx = 0
 	m.player.Load(next.URL)
-	return m, nil
+	var fetch tea.Cmd
+	m, fetch = m.startQueueFetch()
+	return m, fetch
 }
 
 func (m Model) View() string {
@@ -277,7 +342,6 @@ func (m Model) mainView(w int) string {
 		Height(m.height - 2).
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color(th.Border)).
-		Background(lipgloss.Color(th.Surface)).
 		Render(content)
 }
 
@@ -286,7 +350,7 @@ func (m Model) sideView(w int) string {
 	header := lipgloss.NewStyle().
 		Foreground(lipgloss.Color(th.Secondary)).
 		Bold(true).
-		Render("UP NEXT")
+		Render(fmt.Sprintf("UP NEXT (%d)", len(m.upcoming)))
 
 	var items []string
 	if len(m.upcoming) == 0 {
@@ -321,7 +385,6 @@ func (m Model) sideView(w int) string {
 		Height(m.height - 2).
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color(th.Border)).
-		Background(lipgloss.Color(th.Surface)).
 		Render(content)
 }
 
@@ -350,7 +413,6 @@ func (m Model) helpView() string {
 	return lipgloss.NewStyle().
 		Width(m.width).
 		Height(m.height).
-		Background(lipgloss.Color(th.Background)).
 		Padding(2).
 		Render(b.String())
 }
