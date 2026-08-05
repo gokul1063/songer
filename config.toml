@@ -1,0 +1,43 @@
+# songer config
+
+[ui]
+theme = "opencode"
+
+[player]
+volume = 80
+
+[autoplay]
+per_node = 2
+depth = 2
+
+# ---------------------------------------------------------------
+# Themes. All UI colors live here — no hardcoded colors in code.
+# ---------------------------------------------------------------
+
+[themes.opencode]
+background = "#0f0f1a"
+surface    = "#1a1a2e"
+primary    = "#00ff87"
+secondary  = "#00e5ff"
+accent     = "#ffcc66"
+text       = "#e8e8f0"
+muted      = "#6b7280"
+progress   = "#00ff87"
+track      = "#33334d"
+wave       = "#00e5ff"
+selection  = "#00ff87"
+border     = "#2a2a40"
+
+[themes.mono]
+background = "#000000"
+surface    = "#161616"
+primary    = "#ffffff"
+secondary  = "#9a9a9a"
+accent     = "#ffffff"
+text       = "#f0f0f0"
+muted      = "#6b6b6b"
+progress   = "#ffffff"
+track      = "#2a2a2a"
+wave       = "#c0c0c0"
+selection  = "#ffffff"
+border     = "#2a2a2a"

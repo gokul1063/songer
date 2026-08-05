@@ -6,14 +6,18 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"text/tabwriter"
 	"time"
 
 	"songer/pkg/autoplay"
+	"songer/pkg/config"
 	"songer/pkg/download"
+	"songer/pkg/mpv"
 	"songer/pkg/play"
 	"songer/pkg/search"
+	"songer/pkg/tui"
 )
 
 func main() {
@@ -28,6 +32,7 @@ func main() {
 	downloadDir := flag.String("download-dir", "downloads", "directory to save downloads")
 	workers := flag.Int("workers", 3, "number of concurrent downloads")
 	mp3 := flag.Bool("mp3", false, "convert downloads to mp3")
+	tuiMode := flag.Bool("tui", false, "launch the keyboard-driven TUI")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "songer - play songs from YouTube\n\n")
 		fmt.Fprintf(os.Stderr, "Usage:\n  songer --source \"song name\" [flags]\n\nFlags:\n")
@@ -73,6 +78,24 @@ func main() {
 		os.Exit(1)
 	}
 	target := videos[*rank-1]
+
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: %v (using defaults)\n", err)
+		cfg = config.Default()
+	}
+
+	if *tuiMode {
+		if err := runTUI(ctx, cfg, target); err != nil {
+			if ctx.Err() != nil {
+				fmt.Fprintln(os.Stderr, "stopped")
+			} else {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				os.Exit(1)
+			}
+		}
+		return
+	}
 
 	if *download || *downloadAll {
 		doDownloads(ctx, videos, target, *rank, *downloadAll, *downloadDir, *workers, *mp3)
@@ -147,5 +170,25 @@ func doDownloads(ctx context.Context, videos []search.Video, target search.Video
 	}
 	fmt.Printf("\r")
 	fmt.Printf("✓ saved → %s\n", path)
+}
+
+func runTUI(ctx context.Context, cfg config.Config, target search.Video) error {
+	socket := filepath.Join(os.TempDir(), fmt.Sprintf("songer-%d.sock", os.Getpid()))
+	player, err := mpv.New(ctx, target.URL, socket, cfg.Player.Volume)
+	if err != nil {
+		return err
+	}
+	if err := player.Start(); err != nil {
+		return err
+	}
+	defer player.Close()
+
+	queue, err := autoplay.NewClient().BuildQueue(ctx, target.ID, cfg.Autoplay.PerNode, cfg.Autoplay.Depth)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "autoplay error: %v\n", err)
+	}
+
+	fmt.Fprintf(os.Stderr, "♫ Now playing: %s\n", target.Title)
+	return tui.Run(ctx, player, target, queue, cfg.ThemeFor(cfg.UI.Theme))
 }
 

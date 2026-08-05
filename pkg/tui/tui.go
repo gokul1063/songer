@@ -1,0 +1,367 @@
+package tui
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+
+	"songer/pkg/config"
+	"songer/pkg/mpv"
+	"songer/pkg/search"
+)
+
+type waveTick struct{}
+
+type Model struct {
+	player    *mpv.Player
+	theme     config.Theme
+	current   search.Video
+	upcoming  []search.Video
+	queueIdx  int
+	state     mpv.State
+	wave      []float64
+	width     int
+	height    int
+	showHelp  bool
+	status    string
+}
+
+func Run(ctx context.Context, player *mpv.Player, current search.Video, queue []search.Video, theme config.Theme) error {
+	m := Model{
+		player:   player,
+		theme:    theme,
+		current:  current,
+		upcoming: queue,
+		status:   "▶ " + current.Title,
+	}
+	m.wave = nextWave(waveCount(80))
+
+	p := tea.NewProgram(m, tea.WithAltScreen())
+
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case st, ok := <-player.Events():
+				if !ok {
+					return
+				}
+				p.Send(st)
+			case <-stop:
+				return
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	_, err := p.Run()
+	close(stop)
+	<-done
+	return err
+}
+
+func (m Model) Init() tea.Cmd {
+	return waveCmd()
+}
+
+func waveCmd() tea.Cmd {
+	return tea.Tick(waveInterval, func(time.Time) tea.Msg { return waveTick{} })
+}
+
+func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+		m.wave = nextWave(waveCount(msg.Width))
+		return m, nil
+	case waveTick:
+		m.wave = nextWave(waveCount(m.width))
+		return m, waveCmd()
+	case mpv.State:
+		m.state = msg
+		if msg.Ended {
+			return m.advanceNext()
+		}
+		return m, nil
+	case tea.KeyMsg:
+		return m.handleKey(msg)
+	}
+	return m, nil
+}
+
+func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.showHelp {
+		if msg.String() == "?" || msg.Type == tea.KeyEsc {
+			m.showHelp = false
+		}
+		return m, nil
+	}
+
+	switch msg.String() {
+	case "q":
+		return m, tea.Quit
+	case "n":
+		return m.advanceNext()
+	case "p":
+		m.player.TogglePause()
+		return m, nil
+	case "]":
+		m.player.Seek(5 * time.Second)
+		return m, nil
+	case "[":
+		m.player.Seek(-5 * time.Second)
+		return m, nil
+	case "}":
+		m.player.Seek(10 * time.Second)
+		return m, nil
+	case "{":
+		m.player.Seek(-10 * time.Second)
+		return m, nil
+	case "j":
+		if m.queueIdx < len(m.upcoming)-1 {
+			m.queueIdx++
+		}
+		return m, nil
+	case "k":
+		if m.queueIdx > 0 {
+			m.queueIdx--
+		}
+		return m, nil
+	case "+", "=":
+		m.player.SetVolume(m.state.Volume + 5)
+		return m, nil
+	case "-", "_":
+		m.player.SetVolume(m.state.Volume - 5)
+		return m, nil
+	case "?":
+		m.showHelp = true
+		return m, nil
+	}
+
+	switch msg.Type {
+	case tea.KeyCtrlC:
+		return m, tea.Quit
+	case tea.KeySpace:
+		m.player.TogglePause()
+		return m, nil
+	case tea.KeyEnter:
+		return m.playSelected()
+	}
+	return m, nil
+}
+
+func (m Model) advanceNext() (tea.Model, tea.Cmd) {
+	if len(m.upcoming) == 0 {
+		m.status = "end of queue"
+		return m, nil
+	}
+	next := m.upcoming[0]
+	m.upcoming = m.upcoming[1:]
+	m.current = next
+	m.state.Ended = false
+	m.status = "▶ " + next.Title
+	m.player.Load(next.URL)
+	return m, nil
+}
+
+func (m Model) playSelected() (tea.Model, tea.Cmd) {
+	if m.queueIdx < 0 || m.queueIdx >= len(m.upcoming) {
+		return m, nil
+	}
+	next := m.upcoming[m.queueIdx]
+	m.upcoming = append(append([]search.Video{}, m.upcoming[:m.queueIdx]...), m.upcoming[m.queueIdx+1:]...)
+	m.current = next
+	m.state.Ended = false
+	m.status = "▶ " + next.Title
+	m.queueIdx = 0
+	m.player.Load(next.URL)
+	return m, nil
+}
+
+func (m Model) View() string {
+	if m.width == 0 {
+		return "songer — loading…"
+	}
+	if m.showHelp {
+		return m.helpView()
+	}
+
+	mainW := m.width*70/100 - 2
+	if mainW < 10 {
+		mainW = 10
+	}
+	sideW := m.width - mainW - 4
+	if sideW < 10 {
+		sideW = 10
+	}
+
+	main := m.mainView(mainW)
+	side := m.sideView(sideW)
+	return lipgloss.JoinHorizontal(lipgloss.Top, main, side)
+}
+
+func (m Model) mainView(w int) string {
+	th := m.theme
+	title := m.current.Title
+	if title == "" {
+		title = m.state.Title
+	}
+	if title == "" {
+		title = "—"
+	}
+
+	sym := "▶"
+	if m.state.Paused {
+		sym = "⏸"
+	}
+	header := lipgloss.NewStyle().
+		Foreground(lipgloss.Color(th.Primary)).
+		Bold(true).
+		Render(sym + "  " + truncate(title, w-6))
+
+	waveRows := m.height - 6
+	if waveRows < 3 {
+		waveRows = 3
+	}
+	if waveRows > 20 {
+		waveRows = 20
+	}
+	wave := lipgloss.NewStyle().
+		Width(w - 2).
+		Align(lipgloss.Center).
+		Render(waveView(m.wave, waveRows, th.Wave))
+
+	barW := w - 8
+	if barW < 10 {
+		barW = 10
+	}
+	bar := progressBar(m.state.Position, m.state.Duration, barW, th.Progress, th.Track)
+	times := lipgloss.NewStyle().Foreground(lipgloss.Color(th.Muted)).Render(fmtDur(m.state.Position) + " / " + fmtDur(m.state.Duration))
+	progressLine := bar + "  " + times
+
+	statusWord := "playing"
+	if m.state.Paused {
+		statusWord = "paused"
+	}
+	detailParts := []string{m.current.Channel, m.current.Views, statusWord}
+	nonEmpty := []string{}
+	for _, p := range detailParts {
+		if strings.TrimSpace(p) != "" {
+			nonEmpty = append(nonEmpty, p)
+		}
+	}
+	details := strings.Join(nonEmpty, " • ")
+	if m.status != "" {
+		details += "   " + m.status
+	}
+	detailsLine := lipgloss.NewStyle().
+		Foreground(lipgloss.Color(th.Muted)).
+		Render(truncate(details, w-2))
+
+	content := lipgloss.JoinVertical(lipgloss.Center,
+		header,
+		wave,
+		progressLine,
+		detailsLine,
+	)
+	return lipgloss.NewStyle().
+		Width(w).
+		Height(m.height - 2).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color(th.Border)).
+		Background(lipgloss.Color(th.Surface)).
+		Render(content)
+}
+
+func (m Model) sideView(w int) string {
+	th := m.theme
+	header := lipgloss.NewStyle().
+		Foreground(lipgloss.Color(th.Secondary)).
+		Bold(true).
+		Render("UP NEXT")
+
+	var items []string
+	if len(m.upcoming) == 0 {
+		items = append(items, lipgloss.NewStyle().Foreground(lipgloss.Color(th.Muted)).Render("nothing queued"))
+	}
+	for i, v := range m.upcoming {
+		num := fmt.Sprintf("%2d.", i+1)
+		title := truncate(v.Title, w-8)
+		ch := truncate(v.Channel, w-8)
+		line := fmt.Sprintf("%s %s\n   %s", num, title, ch)
+		if i == m.queueIdx {
+			line = lipgloss.NewStyle().
+				Foreground(lipgloss.Color(th.Selection)).
+				Bold(true).
+				Render("▸ " + line)
+		} else {
+			line = lipgloss.NewStyle().
+				Foreground(lipgloss.Color(th.Text)).
+				Render(line)
+		}
+		items = append(items, line)
+	}
+
+	hint := lipgloss.NewStyle().
+		Foreground(lipgloss.Color(th.Muted)).
+		Render("j/k select • enter play")
+
+	list := strings.Join(items, "\n\n")
+	content := lipgloss.JoinVertical(lipgloss.Left, header, list, "\n", hint)
+	return lipgloss.NewStyle().
+		Width(w).
+		Height(m.height - 2).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color(th.Border)).
+		Background(lipgloss.Color(th.Surface)).
+		Render(content)
+}
+
+func (m Model) helpView() string {
+	th := m.theme
+	rows := [][2]string{
+		{"q", "quit"},
+		{"space / p", "play / pause"},
+		{"n", "next song"},
+		{"]", "+5s"},
+		{"[", "-5s"},
+		{"}", "+10s"},
+		{"{", "-10s"},
+		{"j / k", "navigate queue"},
+		{"enter", "play selected"},
+		{"+ / -", "volume"},
+		{"?", "this help"},
+	}
+	var b strings.Builder
+	b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(th.Primary)).Render("SONGER — KEYS\n\n"))
+	for _, r := range rows {
+		key := lipgloss.NewStyle().Foreground(lipgloss.Color(th.Accent)).Bold(true).Render(fmt.Sprintf("%-10s", r[0]))
+		b.WriteString(key + " " + r[1] + "\n")
+	}
+	b.WriteString("\n" + lipgloss.NewStyle().Foreground(lipgloss.Color(th.Muted)).Render("no mouse — everything is keys") + "\n")
+	return lipgloss.NewStyle().
+		Width(m.width).
+		Height(m.height).
+		Background(lipgloss.Color(th.Background)).
+		Padding(2).
+		Render(b.String())
+}
+
+func waveCount(width int) int {
+	n := width * 70 / 100 / 2
+	if n < 4 {
+		n = 4
+	}
+	if n > 140 {
+		n = 140
+	}
+	return n
+}
