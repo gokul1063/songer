@@ -58,7 +58,10 @@ type Model struct {
 	queuePending bool
 	pendingSeed  string
 	focus        focus
+	listScroll   int
 }
+
+const maxQueue = 60
 
 func Run(ctx context.Context, player *mpv.Player, current search.Video, theme config.Theme, perNode, depth int) error {
 	m := Model{
@@ -66,6 +69,7 @@ func Run(ctx context.Context, player *mpv.Player, current search.Video, theme co
 		theme:    theme,
 		ctx:      ctx,
 		current:  current,
+		upcoming: []search.Video{current},
 		status:   "▶ " + current.Title,
 		perNode:  perNode,
 		depth:    depth,
@@ -139,6 +143,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.wave = nextWave(waveCount(msg.Width))
+		m.listScroll = clampScroll(m.listScroll, m.queueIdx, listVisible(m.height), len(m.upcoming))
 		return m, nil
 	case waveTick:
 		m.wave = nextWave(waveCount(m.width))
@@ -157,6 +162,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			seen[v.ID] = true
 			m.upcoming = append(m.upcoming, v)
 		}
+		if len(m.upcoming) > maxQueue {
+			m.upcoming = m.upcoming[:maxQueue]
+		}
+		m.listScroll = clampScroll(m.listScroll, m.queueIdx, listVisible(m.height), len(m.upcoming))
 		return m, nil
 	case queueFailedMsg:
 		m.queuePending = false
@@ -257,11 +266,13 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.queueIdx < len(m.upcoming)-1 {
 			m.queueIdx++
 		}
+		m.listScroll = clampScroll(m.listScroll, m.queueIdx, listVisible(m.height), len(m.upcoming))
 		return m, nil
 	case "k":
 		if m.queueIdx > 0 {
 			m.queueIdx--
 		}
+		m.listScroll = clampScroll(m.listScroll, m.queueIdx, listVisible(m.height), len(m.upcoming))
 		return m, nil
 	case "d":
 		return m.deleteFocused()
@@ -274,28 +285,35 @@ func (m Model) advanceNext() (tea.Model, tea.Cmd) {
 		m.status = "end of queue"
 		return m, nil
 	}
-	next := m.upcoming[0]
-	m.upcoming = m.upcoming[1:]
-	m.current = next
+	v := m.upcoming[0]
+	m.current = v
 	m.state.Ended = false
-	m.status = "▶ " + next.Title
-	m.player.Load(next.URL)
+	m.status = "▶ " + v.Title
+	m.queueIdx = 0
+	m.listScroll = 0
+	m.player.Load(v.URL)
 	var fetch tea.Cmd
 	m, fetch = m.startQueueFetch()
 	return m, fetch
 }
 
 func (m Model) playSelected() (tea.Model, tea.Cmd) {
-	if m.queueIdx < 0 || m.queueIdx >= len(m.upcoming) {
+	return m.playFrom(m.queueIdx)
+}
+
+// playFrom plays the song at index i, moving it to the front of the list.
+func (m Model) playFrom(i int) (tea.Model, tea.Cmd) {
+	if i < 0 || i >= len(m.upcoming) {
 		return m, nil
 	}
-	next := m.upcoming[m.queueIdx]
-	m.upcoming = append(append([]search.Video{}, m.upcoming[:m.queueIdx]...), m.upcoming[m.queueIdx+1:]...)
-	m.current = next
+	v := m.upcoming[i]
+	m.upcoming = append(append([]search.Video{v}, m.upcoming[:i]...), m.upcoming[i+1:]...)
+	m.current = v
 	m.state.Ended = false
-	m.status = "▶ " + next.Title
+	m.status = "▶ " + v.Title
 	m.queueIdx = 0
-	m.player.Load(next.URL)
+	m.listScroll = 0
+	m.player.Load(v.URL)
 	var fetch tea.Cmd
 	m, fetch = m.startQueueFetch()
 	return m, fetch
@@ -310,6 +328,7 @@ func (m Model) deleteFocused() (tea.Model, tea.Cmd) {
 	if m.queueIdx >= len(m.upcoming) && m.queueIdx > 0 {
 		m.queueIdx--
 	}
+	m.listScroll = clampScroll(m.listScroll, m.queueIdx, listVisible(m.height), len(m.upcoming))
 	return m, nil
 }
 
@@ -324,6 +343,7 @@ func (m Model) moveQueue(dir int) (tea.Model, tea.Cmd) {
 	}
 	m.upcoming[m.queueIdx], m.upcoming[swap] = m.upcoming[swap], m.upcoming[m.queueIdx]
 	m.queueIdx = swap
+	m.listScroll = clampScroll(m.listScroll, m.queueIdx, listVisible(m.height), len(m.upcoming))
 	return m, nil
 }
 
@@ -430,16 +450,25 @@ func (m Model) borderColor(f focus) string {
 
 func (m Model) sideView(w int) string {
 	th := m.theme
+	total := len(m.upcoming)
+	maxVis := listVisible(m.height)
+	scroll := clampScroll(m.listScroll, m.queueIdx, maxVis, total)
+	end := scroll + maxVis
+	if end > total {
+		end = total
+	}
+
 	header := lipgloss.NewStyle().
 		Foreground(lipgloss.Color(th.Secondary)).
 		Bold(true).
-		Render(fmt.Sprintf("UP NEXT (%d)", len(m.upcoming)))
+		Render(fmt.Sprintf("UP NEXT (%d)", total))
 
 	var items []string
-	if len(m.upcoming) == 0 {
+	if total == 0 {
 		items = append(items, lipgloss.NewStyle().Foreground(lipgloss.Color(th.Muted)).Render("nothing queued"))
 	}
-	for i, v := range m.upcoming {
+	for i := scroll; i < end; i++ {
+		v := m.upcoming[i]
 		num := fmt.Sprintf("%2d.", i+1)
 		title := truncate(v.Title, w-8)
 		ch := truncate(v.Channel, w-8)
@@ -455,6 +484,9 @@ func (m Model) sideView(w int) string {
 				Render(line)
 		}
 		items = append(items, line)
+	}
+	if end < total {
+		items = append(items, lipgloss.NewStyle().Foreground(lipgloss.Color(th.Muted)).Render(fmt.Sprintf("▾ %d more…", total-end)))
 	}
 
 	hint := lipgloss.NewStyle().
@@ -513,4 +545,37 @@ func waveCount(width int) int {
 		n = 140
 	}
 	return n
+}
+
+// listVisible is how many queue entries fit in the list panel at height h.
+// Each entry is 2 lines + a blank separator.
+func listVisible(h int) int {
+	v := (h - 8) / 3
+	if v < 1 {
+		v = 1
+	}
+	if v > 24 {
+		v = 24
+	}
+	return v
+}
+
+// clampScroll keeps the selection visible within the scroll window.
+func clampScroll(scroll, idx, vis, total int) int {
+	if vis < 1 {
+		vis = 1
+	}
+	if idx < scroll {
+		scroll = idx
+	}
+	if idx >= scroll+vis {
+		scroll = idx - vis + 1
+	}
+	if max := total - vis; scroll > max {
+		scroll = max
+	}
+	if scroll < 0 {
+		scroll = 0
+	}
+	return scroll
 }

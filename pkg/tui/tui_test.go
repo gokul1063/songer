@@ -2,8 +2,10 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -92,14 +94,87 @@ func TestAdvanceOnEnd(t *testing.T) {
 	if nm.current.ID != "b" {
 		t.Fatalf("expected current B, got %s", nm.current.ID)
 	}
-	if len(nm.upcoming) != 1 {
-		t.Fatalf("expected 1 left in queue, got %d", len(nm.upcoming))
+	// the played song stays at the front of the list, rest unchanged
+	if len(nm.upcoming) != 2 || nm.upcoming[0].ID != "b" || nm.upcoming[1].ID != "c" {
+		t.Fatalf("unexpected queue after advance: %+v", nm.upcoming)
 	}
 	if fp.loaded != "u2" {
 		t.Fatalf("expected mpv to load u2, got %q", fp.loaded)
 	}
 	if nm.state.Ended {
 		t.Fatal("Ended should be cleared after advancing")
+	}
+}
+
+func TestPlayFromMovesToFront(t *testing.T) {
+	fp := &fakePlayer{}
+	m := testModel([]search.Video{{ID: "a", Title: "A"}, {ID: "b", Title: "B"}, {ID: "c", Title: "C"}, {ID: "d", Title: "D"}}, 2)
+	m.player = fp
+
+	updated, _ := m.playFrom(2)
+	nm := updated.(Model)
+	got := []string{}
+	for _, v := range nm.upcoming {
+		got = append(got, v.ID)
+	}
+	want := []string{"c", "a", "b", "d"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("playFrom should move c to front: got %v want %v", got, want)
+	}
+	if nm.current.ID != "c" {
+		t.Fatalf("current = %s, want c", nm.current.ID)
+	}
+	if nm.queueIdx != 0 || nm.listScroll != 0 {
+		t.Fatalf("queueIdx=%d scroll=%d, want 0/0", nm.queueIdx, nm.listScroll)
+	}
+}
+
+func TestClampScroll(t *testing.T) {
+	cases := []struct {
+		scroll, idx, vis, total, want int
+	}{
+		{0, 0, 5, 60, 0},
+		{0, 8, 5, 60, 4},  // idx 8 must fit in window of 5 -> scroll 4
+		{10, 2, 5, 60, 2}, // idx above window -> scroll down to 2
+		{0, 0, 5, 3, 0},   // total smaller than window
+		{50, 59, 5, 60, 55},
+		{0, 0, 5, 0, 0}, // empty
+	}
+	for _, c := range cases {
+		if got := clampScroll(c.scroll, c.idx, c.vis, c.total); got != c.want {
+			t.Errorf("clampScroll(%d,%d,%d,%d) = %d, want %d", c.scroll, c.idx, c.vis, c.total, got, c.want)
+		}
+	}
+}
+
+func TestListVisible(t *testing.T) {
+	if v := listVisible(24); v != 5 {
+		t.Errorf("listVisible(24) = %d, want 5", v)
+	}
+	if v := listVisible(8); v != 1 {
+		t.Errorf("listVisible(8) = %d, want 1", v)
+	}
+	if v := listVisible(100); v > 24 {
+		t.Errorf("listVisible(100) = %d, want capped at 24", v)
+	}
+}
+
+func TestQueueCap(t *testing.T) {
+	m := testModel(nil, 0)
+	m.current = search.Video{ID: "current"}
+	up := make([]search.Video, maxQueue)
+	for i := range up {
+		up[i] = search.Video{ID: fmt.Sprintf("id%d", i)}
+	}
+	m.upcoming = up
+
+	more := make([]search.Video, 6)
+	for i := range more {
+		more[i] = search.Video{ID: fmt.Sprintf("new%d", i)}
+	}
+	updated, _ := m.Update(queueLoadedMsg{videos: more})
+	if len(updated.(Model).upcoming) != maxQueue {
+		t.Fatalf("expected cap at %d, got %d", maxQueue, len(updated.(Model).upcoming))
 	}
 }
 
