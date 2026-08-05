@@ -10,6 +10,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"songer/pkg/autoplay"
 	"songer/pkg/play"
 	"songer/pkg/search"
 )
@@ -20,6 +21,7 @@ func main() {
 	rank := flag.Int("rank", 1, "play the Nth search result (1-based)")
 	video := flag.Bool("video", false, "play with video instead of audio-only")
 	noPlay := flag.Bool("no-play", false, "search only, do not start playback")
+	doAutoplay := flag.Bool("autoplay", false, "build a suggested queue (2 + 4 = 6 videos) for the played song")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "songer - play songs from YouTube\n\n")
 		fmt.Fprintf(os.Stderr, "Usage:\n  songer --source \"song name\" [flags]\n\nFlags:\n")
@@ -65,6 +67,21 @@ func main() {
 		os.Exit(1)
 	}
 	target := videos[*rank-1]
+
+	if *doAutoplay {
+		queueStart := time.Now()
+		queue, err := autoplay.NewClient().BuildQueue(ctx, target.ID, 2, 2)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "autoplay error: %v\n", err)
+		} else {
+			fmt.Printf("\n◆ Up next (built in %s):\n", time.Since(queueStart).Round(10*time.Millisecond))
+			tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+			for i, v := range queue {
+				fmt.Fprintf(tw, "  %d.\t%s\t%s\t%s\n", i+1, v.Title, v.Channel, v.URL)
+			}
+			tw.Flush()
+		}
+	}
 
 	fmt.Printf("\n▶ Playing [%d] %s\n", *rank, target.Title)
 	_, err = play.Play(ctx, target, play.Options{
