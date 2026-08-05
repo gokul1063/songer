@@ -15,12 +15,13 @@ import (
 
 type fakePlayer struct {
 	loaded string
+	seeked []time.Duration
 }
 
-func (f *fakePlayer) Load(url string)              { f.loaded = url }
-func (f *fakePlayer) TogglePause()                 {}
-func (f *fakePlayer) Seek(d time.Duration)         {}
-func (f *fakePlayer) SetVolume(v int)              {}
+func (f *fakePlayer) Load(url string)       { f.loaded = url }
+func (f *fakePlayer) TogglePause()          {}
+func (f *fakePlayer) Seek(d time.Duration)  { f.seeked = append(f.seeked, d) }
+func (f *fakePlayer) SetVolume(v int)       {}
 
 func testModel(upcoming []search.Video, idx int) Model {
 	return Model{
@@ -114,6 +115,36 @@ func TestQueueKeysGatedByFocus(t *testing.T) {
 	updated, _ = m.handleKey(j)
 	if updated.(Model).queueIdx != 0 {
 		t.Fatal("j should not navigate when focus is main")
+	}
+}
+
+func TestSeekKeysInMain(t *testing.T) {
+	fp := &fakePlayer{}
+	m := testModel(nil, 0)
+	m.player = fp
+	m.focus = focusMain
+
+	updated, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	if len(fp.seeked) != 1 || fp.seeked[0] != 5*time.Second {
+		t.Fatalf("l in main should seek +5s, got %v", fp.seeked)
+	}
+
+	updated, _ = updated.(Model).handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	if len(fp.seeked) != 2 || fp.seeked[1] != -5*time.Second {
+		t.Fatalf("h in main should seek -5s, got %v", fp.seeked)
+	}
+}
+
+func TestSeekKeysNotInQueue(t *testing.T) {
+	fp := &fakePlayer{}
+	m := testModel(nil, 0)
+	m.player = fp
+	m.focus = focusQueue
+
+	_, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	_, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	if len(fp.seeked) != 0 {
+		t.Fatalf("h/l should not seek when queue focused, got %v", fp.seeked)
 	}
 }
 

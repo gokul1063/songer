@@ -234,6 +234,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if m.focus != focusQueue {
+		switch msg.String() {
+		case "h":
+			m.player.Seek(-5 * time.Second)
+			return m, nil
+		case "l":
+			m.player.Seek(5 * time.Second)
+			return m, nil
+		}
 		return m, nil
 	}
 
@@ -473,6 +481,7 @@ func (m Model) helpView() string {
 		{"[", "-5s"},
 		{"}", "+10s"},
 		{"{", "-10s"},
+		{"h / l", "-5s / +5s (main area)"},
 		{"j / k", "navigate queue"},
 		{"ctrl+j / ctrl+k", "move song up / down"},
 		{"d", "delete focused song"},
