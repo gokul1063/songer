@@ -41,6 +41,7 @@ func New(ctx context.Context, url, socket string, volume int) (*Player, error) {
 	}
 	args := []string{
 		"--no-video",
+		"--idle=yes",
 		"--terminal=no",
 		"--no-input-default-bindings",
 		"--input-ipc-server=" + socket,
@@ -179,10 +180,12 @@ func (p *Player) handleProperty(msg map[string]any) {
 }
 
 // push notifies the TUI, throttling position-only updates to ~4/sec.
+// Ended (end-of-file) is never throttled so auto-advance is never lost.
 func (p *Player) push() {
 	now := time.Now()
 	p.mu.Lock()
-	throttle := now.Sub(p.lastPush) < 250*time.Millisecond
+	ended := p.state.Ended
+	throttle := !ended && now.Sub(p.lastPush) < 250*time.Millisecond
 	p.mu.Unlock()
 	if throttle {
 		return

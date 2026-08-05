@@ -25,8 +25,23 @@ type queueFailedMsg struct {
 	err error
 }
 
+type focus int
+
+const (
+	focusQueue focus = iota
+	focusMain
+)
+
+// playerController is the slice of *mpv.Player the UI needs.
+type playerController interface {
+	Load(url string)
+	TogglePause()
+	Seek(d time.Duration)
+	SetVolume(v int)
+}
+
 type Model struct {
-	player       *mpv.Player
+	player       playerController
 	theme        config.Theme
 	ctx          context.Context
 	current      search.Video
@@ -42,6 +57,7 @@ type Model struct {
 	depth        int
 	queuePending bool
 	pendingSeed  string
+	focus        focus
 }
 
 func Run(ctx context.Context, player *mpv.Player, current search.Video, theme config.Theme, perNode, depth int) error {
@@ -53,6 +69,7 @@ func Run(ctx context.Context, player *mpv.Player, current search.Video, theme co
 		status:   "▶ " + current.Title,
 		perNode:  perNode,
 		depth:    depth,
+		focus:    focusQueue,
 	}
 	m.wave = nextWave(waveCount(80))
 
@@ -166,14 +183,33 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	switch msg.Type {
+	case tea.KeyCtrlC:
+		return m, tea.Quit
+	case tea.KeyCtrlH:
+		m.focus = focusMain
+		return m, nil
+	case tea.KeyCtrlL:
+		m.focus = focusQueue
+		return m, nil
+	case tea.KeySpace:
+		m.player.TogglePause()
+		return m, nil
+	case tea.KeyEnter:
+		if m.focus == focusQueue {
+			return m.playSelected()
+		}
+		return m, nil
+	}
+
 	switch msg.String() {
 	case "q":
 		return m, tea.Quit
-	case "n":
-		return m.advanceNext()
 	case "p":
 		m.player.TogglePause()
 		return m, nil
+	case "n":
+		return m.advanceNext()
 	case "]":
 		m.player.Seek(5 * time.Second)
 		return m, nil
@@ -186,16 +222,6 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "{":
 		m.player.Seek(-10 * time.Second)
 		return m, nil
-	case "j":
-		if m.queueIdx < len(m.upcoming)-1 {
-			m.queueIdx++
-		}
-		return m, nil
-	case "k":
-		if m.queueIdx > 0 {
-			m.queueIdx--
-		}
-		return m, nil
 	case "+", "=":
 		m.player.SetVolume(m.state.Volume + 5)
 		return m, nil
@@ -207,14 +233,30 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	switch msg.Type {
-	case tea.KeyCtrlC:
-		return m, tea.Quit
-	case tea.KeySpace:
-		m.player.TogglePause()
+	if m.focus != focusQueue {
 		return m, nil
-	case tea.KeyEnter:
-		return m.playSelected()
+	}
+
+	switch msg.Type {
+	case tea.KeyCtrlJ:
+		return m.moveQueue(+1)
+	case tea.KeyCtrlK:
+		return m.moveQueue(-1)
+	}
+
+	switch msg.String() {
+	case "j":
+		if m.queueIdx < len(m.upcoming)-1 {
+			m.queueIdx++
+		}
+		return m, nil
+	case "k":
+		if m.queueIdx > 0 {
+			m.queueIdx--
+		}
+		return m, nil
+	case "d":
+		return m.deleteFocused()
 	}
 	return m, nil
 }
@@ -249,6 +291,32 @@ func (m Model) playSelected() (tea.Model, tea.Cmd) {
 	var fetch tea.Cmd
 	m, fetch = m.startQueueFetch()
 	return m, fetch
+}
+
+// deleteFocused removes the selected song from the upcoming queue.
+func (m Model) deleteFocused() (tea.Model, tea.Cmd) {
+	if m.queueIdx < 0 || m.queueIdx >= len(m.upcoming) {
+		return m, nil
+	}
+	m.upcoming = append(append([]search.Video{}, m.upcoming[:m.queueIdx]...), m.upcoming[m.queueIdx+1:]...)
+	if m.queueIdx >= len(m.upcoming) && m.queueIdx > 0 {
+		m.queueIdx--
+	}
+	return m, nil
+}
+
+// moveQueue shifts the selected song up (dir=-1) or down (dir=+1) in the queue.
+func (m Model) moveQueue(dir int) (tea.Model, tea.Cmd) {
+	if len(m.upcoming) < 2 {
+		return m, nil
+	}
+	swap := m.queueIdx + dir
+	if swap < 0 || swap >= len(m.upcoming) {
+		return m, nil
+	}
+	m.upcoming[m.queueIdx], m.upcoming[swap] = m.upcoming[swap], m.upcoming[m.queueIdx]
+	m.queueIdx = swap
+	return m, nil
 }
 
 func (m Model) View() string {
@@ -304,13 +372,13 @@ func (m Model) mainView(w int) string {
 		Align(lipgloss.Center).
 		Render(waveView(m.wave, waveRows, th.Wave))
 
-	barW := w - 8
+	barW := w - 16
 	if barW < 10 {
 		barW = 10
 	}
 	bar := progressBar(m.state.Position, m.state.Duration, barW, th.Progress, th.Track)
 	times := lipgloss.NewStyle().Foreground(lipgloss.Color(th.Muted)).Render(fmtDur(m.state.Position) + " / " + fmtDur(m.state.Duration))
-	progressLine := bar + "  " + times
+	progressLine := lipgloss.NewStyle().Width(w).Render(bar + "  " + times)
 
 	statusWord := "playing"
 	if m.state.Paused {
@@ -341,8 +409,15 @@ func (m Model) mainView(w int) string {
 		Width(w).
 		Height(m.height - 2).
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color(th.Border)).
+		BorderForeground(lipgloss.Color(m.borderColor(focusMain))).
 		Render(content)
+}
+
+func (m Model) borderColor(f focus) string {
+	if m.focus == f {
+		return m.theme.Selection
+	}
+	return m.theme.Border
 }
 
 func (m Model) sideView(w int) string {
@@ -376,7 +451,7 @@ func (m Model) sideView(w int) string {
 
 	hint := lipgloss.NewStyle().
 		Foreground(lipgloss.Color(th.Muted)).
-		Render("j/k select • enter play")
+		Render("j/k • ctrl+j/k • d • enter")
 
 	list := strings.Join(items, "\n\n")
 	content := lipgloss.JoinVertical(lipgloss.Left, header, list, "\n", hint)
@@ -384,7 +459,7 @@ func (m Model) sideView(w int) string {
 		Width(w).
 		Height(m.height - 2).
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color(th.Border)).
+		BorderForeground(lipgloss.Color(m.borderColor(focusQueue))).
 		Render(content)
 }
 
@@ -399,7 +474,10 @@ func (m Model) helpView() string {
 		{"}", "+10s"},
 		{"{", "-10s"},
 		{"j / k", "navigate queue"},
+		{"ctrl+j / ctrl+k", "move song up / down"},
+		{"d", "delete focused song"},
 		{"enter", "play selected"},
+		{"ctrl+h / ctrl+l", "focus 70 / 30 (main / queue)"},
 		{"+ / -", "volume"},
 		{"?", "this help"},
 	}
