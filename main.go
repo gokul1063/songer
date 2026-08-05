@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"songer/pkg/autoplay"
+	"songer/pkg/download"
 	"songer/pkg/play"
 	"songer/pkg/search"
 )
@@ -22,6 +23,11 @@ func main() {
 	video := flag.Bool("video", false, "play with video instead of audio-only")
 	noPlay := flag.Bool("no-play", false, "search only, do not start playback")
 	doAutoplay := flag.Bool("autoplay", false, "build a suggested queue (2 + 4 = 6 videos) for the played song")
+	download := flag.Bool("download", false, "download the selected result and exit")
+	downloadAll := flag.Bool("download-all", false, "download all search results concurrently and exit")
+	downloadDir := flag.String("download-dir", "downloads", "directory to save downloads")
+	workers := flag.Int("workers", 3, "number of concurrent downloads")
+	mp3 := flag.Bool("mp3", false, "convert downloads to mp3")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "songer - play songs from YouTube\n\n")
 		fmt.Fprintf(os.Stderr, "Usage:\n  songer --source \"song name\" [flags]\n\nFlags:\n")
@@ -68,6 +74,11 @@ func main() {
 	}
 	target := videos[*rank-1]
 
+	if *download || *downloadAll {
+		doDownloads(ctx, videos, target, *rank, *downloadAll, *downloadDir, *workers, *mp3)
+		return
+	}
+
 	if *doAutoplay {
 		queueStart := time.Now()
 		queue, err := autoplay.NewClient().BuildQueue(ctx, target.ID, 2, 2)
@@ -100,5 +111,41 @@ func main() {
 			os.Exit(1)
 		}
 	}
+}
+
+func doDownloads(ctx context.Context, videos []search.Video, target search.Video, rank int, all bool, dir string, workers int, mp3 bool) {
+	if all {
+		fmt.Printf("▸ downloading %d videos to %s (%d workers)...\n", len(videos), dir, workers)
+		results := download.DownloadMany(ctx, videos, workers, download.Options{Dir: dir, MP3: mp3})
+		for res := range results {
+			if res.Err != nil {
+				fmt.Printf("✗ [%d] %s: %v\n", res.Index+1, res.Video.Title, res.Err)
+			} else {
+				fmt.Printf("✓ [%d] %s → %s\n", res.Index+1, res.Video.Title, res.Path)
+			}
+		}
+		return
+	}
+
+	fmt.Printf("▸ downloading [%d] %s...\n", rank, target.Title)
+	path, err := download.Download(ctx, target, download.Options{
+		Dir: dir, MP3: mp3,
+		OnProgress: func(v search.Video, pct float64) {
+			fmt.Printf("\r  %3.0f%%", pct)
+		},
+	})
+	if err != nil {
+		if ctx.Err() != nil {
+			fmt.Fprintln(os.Stderr, "\nstopped")
+		} else {
+			fmt.Fprintf(os.Stderr, "\nerror: %v\n", err)
+		}
+		os.Exit(1)
+	}
+	if path == "" {
+		path = dir
+	}
+	fmt.Printf("\r")
+	fmt.Printf("✓ saved → %s\n", path)
 }
 
