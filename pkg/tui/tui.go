@@ -497,9 +497,6 @@ func (m Model) headerView(w int) string {
 	focus := "list"
 	if m.focus == focusMain {
 		focus = "main"
-		if m.page == pagePlaylist {
-			focus = "playlists"
-		}
 	}
 	left := "SONGER"
 	right := fmt.Sprintf("▸ %s • vol %d%% • [%s]", state, m.state.Volume, focus)
