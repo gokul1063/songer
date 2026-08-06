@@ -530,6 +530,19 @@ func (m Model) footerView(w int) string {
 		Render(line)
 }
 
+// fitLines keeps at most h lines, dropping from the top so the bottom
+// (progress bar, song name, details) always stays visible.
+func fitLines(s string, h int) string {
+	if h < 1 {
+		return ""
+	}
+	lines := strings.Split(s, "\n")
+	if len(lines) <= h {
+		return s
+	}
+	return strings.Join(lines[len(lines)-h:], "\n")
+}
+
 func (m Model) mainView(w, h int) string {
 	th := m.theme
 	var content string
@@ -538,6 +551,7 @@ func (m Model) mainView(w, h int) string {
 	} else {
 		content = m.nowPlayingContent(w, h)
 	}
+	content = fitLines(content, h-2)
 
 	border := lipgloss.RoundedBorder()
 	borderColor := th.Border
@@ -748,6 +762,7 @@ func (m Model) sideView(w, h int) string {
 
 	list := strings.Join(items, "\n\n")
 	content := lipgloss.JoinVertical(lipgloss.Left, header, sep, list)
+	content = fitLines(content, h-2)
 
 	border := lipgloss.RoundedBorder()
 	borderColor := th.Border

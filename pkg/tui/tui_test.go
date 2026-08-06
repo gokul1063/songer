@@ -313,6 +313,33 @@ func TestHeaderSurvivesPlaylistPage(t *testing.T) {
 	}
 }
 
+// TestHeaderSurvivesAnySize renders the whole UI at a range of terminal sizes
+// and asserts the header is always present and nothing overflows the screen.
+func TestHeaderSurvivesAnySize(t *testing.T) {
+	for _, w := range []int{60, 80, 100, 140, 200} {
+		for _, h := range []int{8, 10, 12, 14, 18, 24, 32, 48} {
+			for _, page := range []page{pageMain, pagePlaylist} {
+				m := testModel(
+					[]search.Video{{ID: "a", Title: "A"}, {ID: "b", Title: "B"}, {ID: "c", Title: "C"}},
+					1,
+				)
+				m.width = w
+				m.height = h
+				m.page = page
+				m.focus = focusMain
+				out := m.View()
+				lines := strings.Split(out, "\n")
+				if len(lines) > h {
+					t.Errorf("w=%d h=%d page=%d: view is %d rows (> terminal)", w, h, page, len(lines))
+				}
+				if !strings.Contains(out, "SONGER") {
+					t.Errorf("w=%d h=%d page=%d: header missing", w, h, page)
+				}
+			}
+		}
+	}
+}
+
 func TestFocusSwitchKeys(t *testing.T) {
 	m := testModel(nil, 0)
 	updated, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlH})
