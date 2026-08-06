@@ -840,10 +840,10 @@ func playlistBox(data playlistBoxData, selected bool, th config.Theme) string {
 	inner := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.Color(data.color)).
-		Width(6).
-		Height(8).
+		Width(10).
+		Height(5).
 		Align(lipgloss.Center).
-		Render(truncate(symbol, 6))
+		Render(truncate(symbol, 10))
 	return lipgloss.NewStyle().
 		Margin(0, 1).
 		Border(b).
@@ -895,7 +895,7 @@ func (m Model) plListRows() int {
 }
 
 func playlistPerRow(w int) int {
-	r := w / 12
+	r := w / 16
 	if r < 1 {
 		r = 1
 	}

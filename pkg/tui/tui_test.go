@@ -298,8 +298,12 @@ func TestPlaylistBoxSquare(t *testing.T) {
 	th := config.Theme{Border: "#2a2a40", Selection: "#00ff87", Primary: "#00ff87", Accent: "#ffcc66", Secondary: "#00e5ff", Muted: "#6b7280"}
 	box := playlistBox(playlistBoxData{symbol: "★", name: "Favorites", color: "#fff"}, true, th)
 	lines := strings.Split(box, "\n")
-	if len(lines) != ansi.PrintableRuneWidth(lines[0]) {
-		t.Fatalf("box not square: %d lines x %d wide", len(lines), ansi.PrintableRuneWidth(lines[0]))
+	h := len(lines)
+	w := ansi.PrintableRuneWidth(lines[0])
+	// a terminal cell is ~2x taller than wide, so a visually square box has
+	// roughly width == 2*height cells.
+	if diff := w - 2*h; diff < -2 || diff > 2 {
+		t.Fatalf("box not visually square: %d lines x %d wide (want width ~ 2*height)", h, w)
 	}
 }
 
