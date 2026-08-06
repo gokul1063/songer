@@ -35,6 +35,14 @@ const (
 	focusMain
 )
 
+type page int
+
+const (
+	pageMain page = iota
+	pagePlaylist
+	pageCount = 2
+)
+
 // playerController is the slice of *mpv.Player the UI needs.
 type playerController interface {
 	Load(url string)
@@ -65,6 +73,7 @@ type Model struct {
 	lib          *library.Library
 	fav          bool
 	liked        bool
+	page         page
 }
 
 const maxQueue = 60
@@ -198,9 +207,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.showHelp {
-		if msg.String() == "?" || msg.Type == tea.KeyEsc {
+		if msg.String() == "?" || msg.String() == "/" || msg.Type == tea.KeyEsc {
 			m.showHelp = false
 		}
+		return m, nil
+	}
+
+	switch msg.Type {
+	case tea.KeyTab:
+		if msg.Alt {
+			m.page = (m.page - 1 + pageCount) % pageCount
+		} else {
+			m.page = (m.page + 1) % pageCount
+		}
+		return m, nil
+	case tea.KeyShiftTab:
+		m.page = (m.page - 1 + pageCount) % pageCount
 		return m, nil
 	}
 
@@ -475,6 +497,9 @@ func (m Model) headerView(w int) string {
 	focus := "list"
 	if m.focus == focusMain {
 		focus = "main"
+		if m.page == pagePlaylist {
+			focus = "playlists"
+		}
 	}
 	left := "SONGER"
 	right := fmt.Sprintf("▸ %s • vol %d%% • [%s]", state, m.state.Volume, focus)
@@ -509,6 +534,29 @@ func (m Model) footerView(w int) string {
 }
 
 func (m Model) mainView(w, h int) string {
+	th := m.theme
+	var content string
+	if m.page == pagePlaylist {
+		content = m.playlistView(w, h)
+	} else {
+		content = m.nowPlayingContent(w, h)
+	}
+
+	border := lipgloss.RoundedBorder()
+	borderColor := th.Border
+	if m.focus == focusMain {
+		border = lipgloss.DoubleBorder()
+		borderColor = th.Selection
+	}
+	return lipgloss.NewStyle().
+		Width(w).
+		Height(h - 2).
+		Border(border).
+		BorderForeground(lipgloss.Color(borderColor)).
+		Render(content)
+}
+
+func (m Model) nowPlayingContent(w, h int) string {
 	th := m.theme
 	title := m.current.Title
 	if title == "" {
@@ -590,7 +638,7 @@ func (m Model) mainView(w, h int) string {
 		topPad = 0
 	}
 	topSpacer := lipgloss.NewStyle().Height(topPad).Render("")
-	content := lipgloss.JoinVertical(lipgloss.Center,
+	return lipgloss.JoinVertical(lipgloss.Center,
 		topSpacer,
 		wave,
 		"",
@@ -600,19 +648,61 @@ func (m Model) mainView(w, h int) string {
 		"",
 		detailsLine,
 	)
+}
 
-	border := lipgloss.RoundedBorder()
-	borderColor := th.Border
-	if m.focus == focusMain {
-		border = lipgloss.DoubleBorder()
-		borderColor = th.Selection
+// playlistView renders the playlist page: favorite/liked boxes, custom
+// playlists, and a trailing "new playlist" (+) box.
+func (m Model) playlistView(w, h int) string {
+	th := m.theme
+	var boxes []string
+	boxes = append(boxes, playlistBox("★", "Favorites", th))
+	boxes = append(boxes, playlistBox("♥", "Liked", th))
+	if m.lib != nil {
+		for _, name := range m.lib.PlaylistNames() {
+			boxes = append(boxes, playlistBox("♺", name, th))
+		}
 	}
+	boxes = append(boxes, playlistBox("＋", "New", th))
+
+	const boxW = 20
+	perRow := w / boxW
+	if perRow < 1 {
+		perRow = 1
+	}
+	var rows []string
+	for i := 0; i < len(boxes); i += perRow {
+		end := i + perRow
+		if end > len(boxes) {
+			end = len(boxes)
+		}
+		rows = append(rows, lipgloss.JoinHorizontal(lipgloss.Top, boxes[i:end]...))
+	}
+	grid := lipgloss.JoinVertical(lipgloss.Center, rows...)
+
+	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(th.Secondary)).Render("PLAYLISTS")
+	hint := lipgloss.NewStyle().Foreground(lipgloss.Color(th.Muted)).Render("tab switches view • + adds a playlist")
 	return lipgloss.NewStyle().
 		Width(w).
-		Height(h - 2).
-		Border(border).
-		BorderForeground(lipgloss.Color(borderColor)).
-		Render(content)
+		Height(h).
+		Align(lipgloss.Center).
+		Render(lipgloss.JoinVertical(lipgloss.Center, title, "\n", grid, "\n", hint))
+}
+
+func playlistBox(symbol, label string, th config.Theme) string {
+	body := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color(th.Primary)).
+		Width(14).
+		Align(lipgloss.Center).
+		Render(symbol + "\n" + truncate(label, 14))
+	return lipgloss.NewStyle().
+		Width(16).
+		Height(4).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color(th.Border)).
+		Align(lipgloss.Center).
+		Padding(0, 1).
+		Render(body)
 }
 
 func (m Model) sideView(w, h int) string {
@@ -694,6 +784,7 @@ func (m Model) helpBox() string {
 		{"+ / -", "volume"},
 		{"f", "add current to favorites"},
 		{"g", "add current to liked"},
+		{"tab / shift+tab", "switch main / playlist page"},
 		{"? / /", "this help"},
 	}
 	var b strings.Builder
@@ -707,7 +798,6 @@ func (m Model) helpBox() string {
 		Width(52).
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color(th.Selection)).
-		Background(lipgloss.Color(th.Surface)).
 		Padding(1, 2).
 		Render(b.String())
 }

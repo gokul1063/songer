@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -243,6 +244,51 @@ func TestToggleFavorite(t *testing.T) {
 	nm = updated.(Model)
 	if nm.fav || nm.lib.IsFavorite("x") {
 		t.Fatal("favorite not removed")
+	}
+}
+
+func TestPageToggle(t *testing.T) {
+	m := testModel(nil, 0)
+	if m.page != pageMain {
+		t.Fatal("default page should be main")
+	}
+	// tab -> next
+	updated, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyTab})
+	if updated.(Model).page != pagePlaylist {
+		t.Fatal("tab should go to playlist page")
+	}
+	// tab again -> wraps to main
+	updated, _ = updated.(Model).handleKey(tea.KeyMsg{Type: tea.KeyTab})
+	if updated.(Model).page != pageMain {
+		t.Fatal("tab should wrap back to main")
+	}
+	// shift+tab -> previous
+	updated, _ = updated.(Model).handleKey(tea.KeyMsg{Type: tea.KeyShiftTab})
+	if updated.(Model).page != pagePlaylist {
+		t.Fatal("shift+tab should go to previous page")
+	}
+	// alt+tab -> previous
+	updated, _ = updated.(Model).handleKey(tea.KeyMsg{Type: tea.KeyTab, Alt: true})
+	if updated.(Model).page != pageMain {
+		t.Fatal("alt+tab should go to previous page")
+	}
+}
+
+func TestPlaylistView(t *testing.T) {
+	lib, err := library.Open(filepath.Join(t.TempDir(), "lib.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = lib.AddToPlaylist("chill", search.Video{ID: "x", Title: "X"})
+	m := testModel(nil, 0)
+	m.lib = lib
+	m.page = pagePlaylist
+
+	out := m.playlistView(60, 18)
+	for _, want := range []string{"★", "♥", "＋", "Favorites", "Liked", "chill", "PLAYLISTS"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("playlist view missing %q\n%s", want, out)
+		}
 	}
 }
 
