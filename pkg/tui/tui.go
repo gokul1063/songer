@@ -74,6 +74,9 @@ type Model struct {
 	fav          bool
 	liked        bool
 	page         page
+	plFocus      int
+	plList       bool
+	plListScroll int
 }
 
 const maxQueue = 60
@@ -220,10 +223,27 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		} else {
 			m.page = (m.page + 1) % pageCount
 		}
+		if m.page == pagePlaylist {
+			m.plFocus = 0
+			m.plList = false
+			m.plListScroll = 0
+		}
 		return m, nil
 	case tea.KeyShiftTab:
 		m.page = (m.page - 1 + pageCount) % pageCount
+		if m.page == pagePlaylist {
+			m.plFocus = 0
+			m.plList = false
+			m.plListScroll = 0
+		}
 		return m, nil
+	}
+
+	if m.page == pagePlaylist {
+		var handled bool
+		if m, handled = m.playlistKey(msg); handled {
+			return m, nil
+		}
 	}
 
 	switch msg.Type {
@@ -488,18 +508,27 @@ func (m Model) bodyView(w, h int) string {
 	return lipgloss.JoinHorizontal(lipgloss.Top, m.mainView(mainW, h), m.sideView(sideW, h))
 }
 
+// tabName is the name shown top-right in the header for the current page
+// (and the opened list, if inside one).
+func (m Model) tabName() string {
+	if m.page == pageMain {
+		return "main"
+	}
+	if m.plList {
+		d, _ := m.boxAt(m.plFocus)
+		return d.name
+	}
+	return "playlists"
+}
+
 func (m Model) headerView(w int) string {
 	th := m.theme
 	state := "playing"
 	if m.state.Paused {
 		state = "paused"
 	}
-	focus := "list"
-	if m.focus == focusMain {
-		focus = "main"
-	}
 	left := "SONGER"
-	right := fmt.Sprintf("▸ %s • vol %d%% • [%s]", state, m.state.Volume, focus)
+	right := fmt.Sprintf("▸ %s • vol %d%% • %s", state, m.state.Volume, m.tabName())
 	pad := w - runewidth.StringWidth(left) - runewidth.StringWidth(right)
 	if pad < 1 {
 		pad = 1
@@ -547,7 +576,7 @@ func (m Model) mainView(w, h int) string {
 	th := m.theme
 	var content string
 	if m.page == pagePlaylist {
-		content = m.playlistView(w)
+		content = m.playlistView(w, h-2)
 	} else {
 		content = m.nowPlayingContent(w, h)
 	}
@@ -661,58 +690,219 @@ func (m Model) nowPlayingContent(w, h int) string {
 	)
 }
 
-// playlistView renders the playlist page: favorite/liked boxes, custom
-// playlists, and a trailing "new playlist" (+) box.
-func (m Model) playlistView(w int) string {
-	th := m.theme
-	var boxes []string
-	boxes = append(boxes, playlistBox("★", "Favorites", th))
-	boxes = append(boxes, playlistBox("♥", "Liked", th))
-	if m.lib != nil {
-		for _, name := range m.lib.PlaylistNames() {
-			boxes = append(boxes, playlistBox("♺", name, th))
-		}
-	}
-	boxes = append(boxes, playlistBox("＋", "New", th))
-
-	const boxW = 20
-	perRow := w / boxW
-	if perRow < 1 {
-		perRow = 1
-	}
-	var rows []string
-	for i := 0; i < len(boxes); i += perRow {
-		end := i + perRow
-		if end > len(boxes) {
-			end = len(boxes)
-		}
-		rows = append(rows, lipgloss.JoinHorizontal(lipgloss.Top, boxes[i:end]...))
-	}
-	grid := lipgloss.JoinVertical(lipgloss.Center, rows...)
-
-	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(th.Secondary)).Render("PLAYLISTS")
-	hint := lipgloss.NewStyle().Foreground(lipgloss.Color(th.Muted)).Render("tab switches view • + adds a playlist")
-	return lipgloss.NewStyle().
-		Width(w).
-		Align(lipgloss.Center).
-		Render(lipgloss.JoinVertical(lipgloss.Center, title, "\n", grid, "\n", hint))
+// playlistBoxData is one square in the playlist matrix.
+type playlistBoxData struct {
+	symbol string
+	name   string
+	color  string
+	isPlus bool
 }
 
-func playlistBox(symbol, label string, th config.Theme) string {
-	body := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color(th.Primary)).
-		Width(14).
-		Align(lipgloss.Center).
-		Render(symbol + "\n" + truncate(label, 14))
+// buildBoxes returns the squares in order: favorites, liked, custom
+// playlists, and the trailing "+" (always last).
+func (m Model) buildBoxes() []playlistBoxData {
+	th := m.theme
+	boxes := []playlistBoxData{
+		{symbol: "★", name: "Favorites", color: th.Primary},
+		{symbol: "♥", name: "Liked", color: th.Accent},
+	}
+	if m.lib != nil {
+		for _, n := range m.lib.PlaylistNames() {
+			boxes = append(boxes, playlistBoxData{symbol: "♺", name: n, color: th.Secondary})
+		}
+	}
+	boxes = append(boxes, playlistBoxData{symbol: "＋", name: "New", color: th.Muted, isPlus: true})
+	return boxes
+}
+
+func (m Model) boxAt(i int) (playlistBoxData, []library.Entry) {
+	boxes := m.buildBoxes()
+	if i < 0 || i >= len(boxes) {
+		return playlistBoxData{}, nil
+	}
+	d := boxes[i]
+	var entries []library.Entry
+	if m.lib != nil {
+		switch d.name {
+		case "Favorites":
+			entries = m.lib.Favorites
+		case "Liked":
+			entries = m.lib.Liked
+		case "New":
+			entries = nil
+		default:
+			entries = m.lib.Playlist(d.name)
+		}
+	}
+	return d, entries
+}
+
+// playlistKey handles navigation while the playlist page is active.
+// Returns handled=true when the key belongs to this page.
+func (m Model) playlistKey(msg tea.KeyMsg) (Model, bool) {
+	if m.plList {
+		maxVis := m.plListRows()
+		switch msg.String() {
+		case "j":
+			_, entries := m.boxAt(m.plFocus)
+			if len(entries) > 0 && m.plListScroll < len(entries)-maxVis {
+				m.plListScroll++
+			}
+			return m, true
+		case "k":
+			if m.plListScroll > 0 {
+				m.plListScroll--
+			}
+			return m, true
+		}
+		switch msg.Type {
+		case tea.KeyBackspace:
+			m.plList = false
+			m.plListScroll = 0
+			return m, true
+		case tea.KeyEnter:
+			return m, true
+		}
+		return m, false
+	}
+
+	perRow := playlistPerRow(m.width)
+	total := len(m.buildBoxes())
+	switch msg.String() {
+	case "l":
+		if m.plFocus%perRow < perRow-1 && m.plFocus+1 < total {
+			m.plFocus++
+		}
+		return m, true
+	case "h":
+		if m.plFocus%perRow > 0 {
+			m.plFocus--
+		}
+		return m, true
+	case "j":
+		if m.plFocus+perRow < total {
+			m.plFocus += perRow
+		}
+		return m, true
+	case "k":
+		if m.plFocus-perRow >= 0 {
+			m.plFocus -= perRow
+		}
+		return m, true
+	}
+	switch msg.Type {
+	case tea.KeyEnter:
+		d, _ := m.boxAt(m.plFocus)
+		if !d.isPlus {
+			m.plList = true
+			m.plListScroll = 0
+		}
+		return m, true
+	case tea.KeyBackspace:
+		return m, true
+	}
+	return m, false
+}
+
+// playlistView renders either the box matrix or the list of the opened box.
+func (m Model) playlistView(w, h int) string {
+	if m.plList {
+		return m.playlistListView(w, h)
+	}
+	th := m.theme
+	boxes := m.buildBoxes()
+	perRow := playlistPerRow(w)
+	var rows []string
+	for r := 0; r*perRow < len(boxes); r++ {
+		var row []string
+		for c := 0; c < perRow && r*perRow+c < len(boxes); c++ {
+			i := r*perRow + c
+			row = append(row, playlistBox(boxes[i], i == m.plFocus, th))
+		}
+		rows = append(rows, lipgloss.JoinHorizontal(lipgloss.Top, row...))
+	}
 	return lipgloss.NewStyle().
-		Width(16).
-		Height(4).
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color(th.Border)).
+		Width(w).
+		Render(lipgloss.JoinVertical(lipgloss.Left, rows...))
+}
+
+func playlistBox(data playlistBoxData, selected bool, th config.Theme) string {
+	bc := th.Border
+	b := lipgloss.RoundedBorder()
+	if selected {
+		bc = th.Selection
+		b = lipgloss.DoubleBorder()
+	}
+	symbol := data.symbol
+	if !data.isPlus && data.name != "Favorites" && data.name != "Liked" {
+		symbol = data.name
+	}
+	inner := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color(data.color)).
+		Width(6).
+		Height(8).
 		Align(lipgloss.Center).
-		Padding(0, 1).
-		Render(body)
+		Render(truncate(symbol, 6))
+	return lipgloss.NewStyle().
+		Margin(0, 1).
+		Border(b).
+		BorderForeground(lipgloss.Color(bc)).
+		Render(inner)
+}
+
+// playlistListView prints the songs inside the opened box.
+func (m Model) playlistListView(w, h int) string {
+	th := m.theme
+	d, entries := m.boxAt(m.plFocus)
+	header := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color(th.Secondary)).
+		Render(fmt.Sprintf("%s  (%d)", d.name, len(entries)))
+	sep := lipgloss.NewStyle().Foreground(lipgloss.Color(th.Border)).Render(strings.Repeat("─", w-2))
+
+	var lines []string
+	if len(entries) == 0 {
+		lines = append(lines, lipgloss.NewStyle().Foreground(lipgloss.Color(th.Muted)).Render("empty"))
+	} else {
+		maxVis := m.plListRows()
+		end := m.plListScroll + maxVis
+		if end > len(entries) {
+			end = len(entries)
+		}
+		for i := m.plListScroll; i < end; i++ {
+			e := entries[i]
+			lines = append(lines, fmt.Sprintf("%2d. %s\n    %s",
+				i+1,
+				truncate(e.Video.Title, w-10),
+				truncate(e.Video.Channel, w-10)))
+		}
+		if end < len(entries) {
+			lines = append(lines, lipgloss.NewStyle().Foreground(lipgloss.Color(th.Muted)).
+				Render(fmt.Sprintf("▾ %d more…", len(entries)-end)))
+		}
+	}
+	content := lipgloss.JoinVertical(lipgloss.Left, header, sep, strings.Join(lines, "\n\n"))
+	return lipgloss.NewStyle().Width(w).Render(content)
+}
+
+func (m Model) plListRows() int {
+	v := (m.height - 6) / 2
+	if v < 1 {
+		v = 1
+	}
+	return v
+}
+
+func playlistPerRow(w int) int {
+	r := w / 12
+	if r < 1 {
+		r = 1
+	}
+	if r > 12 {
+		r = 12
+	}
+	return r
 }
 
 func (m Model) sideView(w, h int) string {
@@ -796,6 +986,7 @@ func (m Model) helpBox() string {
 		{"f", "add current to favorites"},
 		{"g", "add current to liked"},
 		{"tab / shift+tab", "switch main / playlist page"},
+		{"enter / backspace", "open / back (playlists)"},
 		{"? / /", "this help"},
 	}
 	var b strings.Builder

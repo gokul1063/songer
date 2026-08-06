@@ -11,7 +11,9 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/muesli/reflow/ansi"
 
+	"songer/pkg/config"
 	"songer/pkg/library"
 	"songer/pkg/mpv"
 	"songer/pkg/search"
@@ -284,11 +286,88 @@ func TestPlaylistView(t *testing.T) {
 	m.lib = lib
 	m.page = pagePlaylist
 
-	out := m.playlistView(60)
-	for _, want := range []string{"★", "♥", "＋", "Favorites", "Liked", "chill", "PLAYLISTS"} {
+	out := m.playlistView(60, 18)
+	for _, want := range []string{"★", "♥", "＋", "chill"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("playlist view missing %q\n%s", want, out)
 		}
+	}
+}
+
+func TestPlaylistBoxSquare(t *testing.T) {
+	th := config.Theme{Border: "#2a2a40", Selection: "#00ff87", Primary: "#00ff87", Accent: "#ffcc66", Secondary: "#00e5ff", Muted: "#6b7280"}
+	box := playlistBox(playlistBoxData{symbol: "★", name: "Favorites", color: "#fff"}, true, th)
+	lines := strings.Split(box, "\n")
+	if len(lines) != ansi.PrintableRuneWidth(lines[0]) {
+		t.Fatalf("box not square: %d lines x %d wide", len(lines), ansi.PrintableRuneWidth(lines[0]))
+	}
+}
+
+func TestPlaylistNav(t *testing.T) {
+	m := testModel(nil, 0)
+	m.page = pagePlaylist
+	m.width = 100
+
+	// first square highlighted by default
+	if m.plFocus != 0 {
+		t.Fatalf("plFocus = %d, want 0", m.plFocus)
+	}
+	// l -> second square
+	updated, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	if updated.(Model).plFocus != 1 {
+		t.Fatalf("plFocus after l = %d, want 1", updated.(Model).plFocus)
+	}
+	// enter the liked box
+	updated, _ = updated.(Model).handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	nm := updated.(Model)
+	if !nm.plList {
+		t.Fatal("enter should open the list")
+	}
+	// backspace exits, focus stays on that square
+	updated, _ = nm.handleKey(tea.KeyMsg{Type: tea.KeyBackspace})
+	nm = updated.(Model)
+	if nm.plList {
+		t.Fatal("backspace should exit the list")
+	}
+	if nm.plFocus != 1 {
+		t.Fatalf("plFocus after backspace = %d, want 1", nm.plFocus)
+	}
+}
+
+func TestPlaylistEnterPlusNoop(t *testing.T) {
+	m := testModel(nil, 0)
+	m.page = pagePlaylist
+	m.width = 100
+	// move focus to the plus (last box)
+	last := len(m.buildBoxes()) - 1
+	m.plFocus = last
+	updated, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	if updated.(Model).plList {
+		t.Fatal("enter on + must do nothing")
+	}
+}
+
+func TestTabName(t *testing.T) {
+	m := testModel(nil, 0)
+	if got := m.tabName(); got != "main" {
+		t.Fatalf("main page tab name = %q", got)
+	}
+	m.page = pagePlaylist
+	if got := m.tabName(); got != "playlists" {
+		t.Fatalf("playlist page tab name = %q", got)
+	}
+	m.plList = true
+	m.plFocus = 0
+	if got := m.tabName(); got != "Favorites" {
+		t.Fatalf("list tab name = %q", got)
+	}
+
+	// header actually renders the tab name top-right
+	m.width = 100
+	m.height = 24
+	h := m.headerView(m.width)
+	if !strings.Contains(h, "Favorites") {
+		t.Fatalf("header missing tab name:\n%q", h)
 	}
 }
 
