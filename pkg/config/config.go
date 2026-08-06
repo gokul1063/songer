@@ -39,8 +39,14 @@ type Theme struct {
 	Progress   string `toml:"progress"`
 	Track      string `toml:"track"`
 	Wave       string `toml:"wave"`
+	WaveAlt    string `toml:"wave_alt"`
+	Thumb      string `toml:"thumb"`
 	Selection  string `toml:"selection"`
 	Border     string `toml:"border"`
+	Header     string `toml:"header"`
+	HeaderBg   string `toml:"header_bg"`
+	Footer     string `toml:"footer"`
+	FooterBg   string `toml:"footer_bg"`
 }
 
 func Default() Config {
@@ -60,8 +66,14 @@ func Default() Config {
 				Progress:   "#00ff87",
 				Track:      "#33334d",
 				Wave:       "#00e5ff",
+				WaveAlt:    "#00ff87",
+				Thumb:      "#ffcc66",
 				Selection:  "#00ff87",
 				Border:     "#2a2a40",
+				Header:     "#00ff87",
+				HeaderBg:   "#16162a",
+				Footer:     "#9aa0b4",
+				FooterBg:   "#16162a",
 			},
 		},
 	}

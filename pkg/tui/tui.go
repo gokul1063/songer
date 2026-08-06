@@ -8,6 +8,7 @@ import (
 
 	"github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/mattn/go-runewidth"
 
 	"songer/pkg/autoplay"
 	"songer/pkg/config"
@@ -73,6 +74,7 @@ func Run(ctx context.Context, player *mpv.Player, current search.Video, theme co
 		perNode: perNode,
 		depth:   depth,
 		focus:   focusQueue,
+		state:   player.State(),
 	}
 	m.wave = nextWave(waveCount(80))
 
@@ -142,7 +144,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.wave = nextWave(waveCount(msg.Width))
-		m.listScroll = clampScroll(m.listScroll, m.queueIdx, listVisible(m.height), len(m.upcoming))
+		m.listScroll = clampScroll(m.listScroll, m.queueIdx, listVisible(m.height-2), len(m.upcoming))
 		return m, nil
 	case waveTick:
 		m.wave = nextWave(waveCount(m.width))
@@ -164,7 +166,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(m.upcoming) > maxQueue {
 			m.upcoming = m.upcoming[:maxQueue]
 		}
-		m.listScroll = clampScroll(m.listScroll, m.queueIdx, listVisible(m.height), len(m.upcoming))
+		m.listScroll = clampScroll(m.listScroll, m.queueIdx, listVisible(m.height-2), len(m.upcoming))
 		return m, nil
 	case queueFailedMsg:
 		m.queuePending = false
@@ -265,13 +267,13 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.queueIdx < len(m.upcoming)-1 {
 			m.queueIdx++
 		}
-		m.listScroll = clampScroll(m.listScroll, m.queueIdx, listVisible(m.height), len(m.upcoming))
+		m.listScroll = clampScroll(m.listScroll, m.queueIdx, listVisible(m.height-2), len(m.upcoming))
 		return m, nil
 	case "k":
 		if m.queueIdx > 0 {
 			m.queueIdx--
 		}
-		m.listScroll = clampScroll(m.listScroll, m.queueIdx, listVisible(m.height), len(m.upcoming))
+		m.listScroll = clampScroll(m.listScroll, m.queueIdx, listVisible(m.height-2), len(m.upcoming))
 		return m, nil
 	case "d":
 		return m.deleteFocused()
@@ -334,7 +336,7 @@ func (m Model) deleteFocused() (tea.Model, tea.Cmd) {
 	if m.queueIdx >= len(m.upcoming) && m.queueIdx > 0 {
 		m.queueIdx--
 	}
-	m.listScroll = clampScroll(m.listScroll, m.queueIdx, listVisible(m.height), len(m.upcoming))
+	m.listScroll = clampScroll(m.listScroll, m.queueIdx, listVisible(m.height-2), len(m.upcoming))
 	return m, nil
 }
 
@@ -349,7 +351,7 @@ func (m Model) moveQueue(dir int) (tea.Model, tea.Cmd) {
 	}
 	m.upcoming[m.queueIdx], m.upcoming[swap] = m.upcoming[swap], m.upcoming[m.queueIdx]
 	m.queueIdx = swap
-	m.listScroll = clampScroll(m.listScroll, m.queueIdx, listVisible(m.height), len(m.upcoming))
+	m.listScroll = clampScroll(m.listScroll, m.queueIdx, listVisible(m.height-2), len(m.upcoming))
 	return m, nil
 }
 
@@ -361,21 +363,72 @@ func (m Model) View() string {
 		return m.helpView()
 	}
 
-	mainW := m.width*70/100 - 2
+	bodyH := m.height - 2
+	if bodyH < 4 {
+		bodyH = 4
+	}
+	return lipgloss.JoinVertical(lipgloss.Top,
+		m.headerView(m.width),
+		m.bodyView(m.width, bodyH),
+		m.footerView(m.width),
+	)
+}
+
+func (m Model) bodyView(w, h int) string {
+	mainW := w*70/100 - 2
 	if mainW < 10 {
 		mainW = 10
 	}
-	sideW := m.width - mainW - 4
+	sideW := w - mainW - 4
 	if sideW < 10 {
 		sideW = 10
 	}
-
-	main := m.mainView(mainW)
-	side := m.sideView(sideW)
-	return lipgloss.JoinHorizontal(lipgloss.Top, main, side)
+	return lipgloss.JoinHorizontal(lipgloss.Top, m.mainView(mainW, h), m.sideView(sideW, h))
 }
 
-func (m Model) mainView(w int) string {
+func (m Model) headerView(w int) string {
+	th := m.theme
+	state := "playing"
+	if m.state.Paused {
+		state = "paused"
+	}
+	focus := "list"
+	if m.focus == focusMain {
+		focus = "main"
+	}
+	left := "♫ SONGER"
+	right := fmt.Sprintf("▸ %s • vol %d%% • [%s]", state, m.state.Volume, focus)
+	pad := w - runewidth.StringWidth(left) - runewidth.StringWidth(right)
+	if pad < 1 {
+		pad = 1
+	}
+	line := left + strings.Repeat(" ", pad) + right
+	return lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color(th.Header)).
+		Background(lipgloss.Color(th.HeaderBg)).
+		Width(w).
+		Render(line)
+}
+
+func (m Model) footerView(w int) string {
+	th := m.theme
+	hints := []string{"q quit", "space pause", "n next", "] +5s", "[ -5s"}
+	if m.focus == focusQueue {
+		hints = append(hints, "j/k nav", "ctrl+j/k move", "d delete", "enter play", "ctrl+l main")
+	} else {
+		hints = append(hints, "h/l seek", "ctrl+h list")
+	}
+	hints = append(hints, "? help")
+	line := truncate(strings.Join(hints, "   "), w)
+	return lipgloss.NewStyle().
+		Foreground(lipgloss.Color(th.Footer)).
+		Background(lipgloss.Color(th.FooterBg)).
+		Width(w).
+		Render(line)
+}
+
+func (m Model) mainView(w, h int) string {
 	th := m.theme
 	title := m.current.Title
 	if title == "" {
@@ -390,7 +443,7 @@ func (m Model) mainView(w int) string {
 		sym = "⏸"
 	}
 
-	waveRows := m.height - 8
+	waveRows := h - 8
 	if waveRows < 3 {
 		waveRows = 3
 	}
@@ -400,15 +453,23 @@ func (m Model) mainView(w int) string {
 	wave := lipgloss.NewStyle().
 		Width(w - 2).
 		Align(lipgloss.Center).
-		Render(waveView(m.wave, waveRows, th.Wave))
+		Render(waveView(m.wave, waveRows, th.Wave, th.WaveAlt))
 
-	barW := w - 16
+	pct := 0.0
+	if m.state.Duration > 0 {
+		pct = m.state.Position.Seconds() / m.state.Duration.Seconds()
+	}
+	pctStr := fmt.Sprintf("%3.0f%%", pct*100)
+	barW := w - 30
 	if barW < 10 {
 		barW = 10
 	}
-	bar := progressBar(m.state.Position, m.state.Duration, barW, th.Progress, th.Track)
-	times := lipgloss.NewStyle().Foreground(lipgloss.Color(th.Muted)).Render(fmtDur(m.state.Position) + " / " + fmtDur(m.state.Duration))
-	progressLine := lipgloss.NewStyle().Width(w).Render(bar + "  " + times)
+	bar := progressBar(m.state.Position, m.state.Duration, barW, th.Progress, th.Track, th.Thumb)
+	progressLine := pctStr + "  " + bar + "  " + fmtDur(m.state.Position) + " / " + fmtDur(m.state.Duration)
+	if m.state.Duration > 0 {
+		progressLine += "  -" + fmtDur(m.state.Duration-m.state.Position)
+	}
+	progressLine = lipgloss.NewStyle().Width(w).Render(progressLine)
 
 	// song name under the bar
 	songLine := lipgloss.NewStyle().
@@ -435,31 +496,26 @@ func (m Model) mainView(w int) string {
 		Foreground(lipgloss.Color(th.Muted)).
 		Render(truncate(details, w-2))
 
-	content := lipgloss.JoinVertical(lipgloss.Center,
-		wave,
-		progressLine,
-		songLine,
-		detailsLine,
-	)
+	content := lipgloss.JoinVertical(lipgloss.Center, wave, progressLine, songLine, detailsLine)
+
+	border := lipgloss.RoundedBorder()
+	borderColor := th.Border
+	if m.focus == focusMain {
+		border = lipgloss.DoubleBorder()
+		borderColor = th.Selection
+	}
 	return lipgloss.NewStyle().
 		Width(w).
-		Height(m.height - 2).
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color(m.borderColor(focusMain))).
+		Height(h - 2).
+		Border(border).
+		BorderForeground(lipgloss.Color(borderColor)).
 		Render(content)
 }
 
-func (m Model) borderColor(f focus) string {
-	if m.focus == f {
-		return m.theme.Selection
-	}
-	return m.theme.Border
-}
-
-func (m Model) sideView(w int) string {
+func (m Model) sideView(w, h int) string {
 	th := m.theme
 	total := len(m.upcoming)
-	maxVis := listVisible(m.height)
+	maxVis := listVisible(h)
 	scroll := clampScroll(m.listScroll, m.queueIdx, maxVis, total)
 	end := scroll + maxVis
 	if end > total {
@@ -470,6 +526,7 @@ func (m Model) sideView(w int) string {
 		Foreground(lipgloss.Color(th.Secondary)).
 		Bold(true).
 		Render(fmt.Sprintf("UP NEXT (%d)", total))
+	sep := lipgloss.NewStyle().Foreground(lipgloss.Color(th.Border)).Render(strings.Repeat("─", w-2))
 
 	var items []string
 	if total == 0 {
@@ -479,6 +536,9 @@ func (m Model) sideView(w int) string {
 		v := m.upcoming[i]
 		num := fmt.Sprintf("%2d.", i+1)
 		title := truncate(v.Title, w-8)
+		if v.Duration != "" {
+			title = truncate(v.Title, w-14) + "  " + lipgloss.NewStyle().Foreground(lipgloss.Color(th.Muted)).Render(v.Duration)
+		}
 		ch := truncate(v.Channel, w-8)
 		line := fmt.Sprintf("%s %s\n   %s", num, title, ch)
 		if i == m.queueIdx {
@@ -497,17 +557,20 @@ func (m Model) sideView(w int) string {
 		items = append(items, lipgloss.NewStyle().Foreground(lipgloss.Color(th.Muted)).Render(fmt.Sprintf("▾ %d more…", total-end)))
 	}
 
-	hint := lipgloss.NewStyle().
-		Foreground(lipgloss.Color(th.Muted)).
-		Render("j/k • ctrl+j/k • d • enter")
-
 	list := strings.Join(items, "\n\n")
-	content := lipgloss.JoinVertical(lipgloss.Left, header, list, "\n", hint)
+	content := lipgloss.JoinVertical(lipgloss.Left, header, sep, list)
+
+	border := lipgloss.RoundedBorder()
+	borderColor := th.Border
+	if m.focus == focusQueue {
+		border = lipgloss.DoubleBorder()
+		borderColor = th.Selection
+	}
 	return lipgloss.NewStyle().
 		Width(w).
-		Height(m.height - 2).
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color(m.borderColor(focusQueue))).
+		Height(h - 2).
+		Border(border).
+		BorderForeground(lipgloss.Color(borderColor)).
 		Render(content)
 }
 

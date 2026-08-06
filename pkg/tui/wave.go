@@ -40,16 +40,21 @@ func nextWave(n int) []float64 {
 	return heights
 }
 
-func waveView(heights []float64, rows int, color string) string {
+// waveView renders the equalizer with a horizontal gradient from->to color.
+func waveView(heights []float64, rows int, from, to string) string {
 	if len(heights) == 0 || rows < 1 {
 		return ""
 	}
-	bar := lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Render("█")
 	var b strings.Builder
 	for r := rows; r >= 1; r-- {
-		for _, h := range heights {
+		for i, h := range heights {
 			if int(math.Round(h*float64(rows))) >= r {
-				b.WriteString(bar)
+				t := 0.0
+				if len(heights) > 1 {
+					t = float64(i) / float64(len(heights)-1)
+				}
+				c := lerpColor(from, to, t)
+				b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(c)).Render("█"))
 			} else {
 				b.WriteByte(' ')
 			}
@@ -61,7 +66,8 @@ func waveView(heights []float64, rows int, color string) string {
 	return b.String()
 }
 
-func progressBar(pos, total time.Duration, width int, doneColor, trackColor string) string {
+// progressBar draws a seekbar with a moving thumb: ━━━━●────
+func progressBar(pos, total time.Duration, width int, doneColor, trackColor, thumbColor string) string {
 	if width < 1 {
 		return ""
 	}
@@ -76,9 +82,43 @@ func progressBar(pos, total time.Duration, width int, doneColor, trackColor stri
 		pct = 0
 	}
 	filled := int(math.Round(pct * float64(width)))
-	done := lipgloss.NewStyle().Foreground(lipgloss.Color(doneColor)).Render(strings.Repeat("█", filled))
-	track := lipgloss.NewStyle().Foreground(lipgloss.Color(trackColor)).Render(strings.Repeat("░", width-filled))
-	return done + track
+	if filled > width-1 {
+		filled = width - 1
+	}
+	track := width - filled - 1
+
+	done := lipgloss.NewStyle().Foreground(lipgloss.Color(doneColor)).Render(strings.Repeat("━", filled))
+	thumb := lipgloss.NewStyle().Foreground(lipgloss.Color(thumbColor)).Render("●")
+	rest := lipgloss.NewStyle().Foreground(lipgloss.Color(trackColor)).Render(strings.Repeat("─", track))
+	return done + thumb + rest
+}
+
+// lerpColor interpolates between two hex colors at t in [0,1].
+func lerpColor(a, b string, t float64) string {
+	if t <= 0 {
+		return a
+	}
+	if t >= 1 {
+		return b
+	}
+	ar, ag, ab := parseHex(a)
+	br, bg, bb := parseHex(b)
+	r := int(float64(ar) + (float64(br)-float64(ar))*t)
+	g := int(float64(ag) + (float64(bg)-float64(ag))*t)
+	bl := int(float64(ab) + (float64(bb)-float64(ab))*t)
+	return fmt.Sprintf("#%02x%02x%02x", clampInt(r, 0, 255), clampInt(g, 0, 255), clampInt(bl, 0, 255))
+}
+
+func parseHex(c string) (int, int, int) {
+	c = strings.TrimPrefix(strings.TrimSpace(c), "#")
+	if len(c) != 6 {
+		return 255, 255, 255
+	}
+	var v uint64
+	if _, err := fmt.Sscanf(c, "%x", &v); err != nil {
+		return 255, 255, 255
+	}
+	return int(v >> 16 & 0xff), int(v >> 8 & 0xff), int(v & 0xff)
 }
 
 func fmtDur(d time.Duration) string {
@@ -96,6 +136,16 @@ func fmtDur(d time.Duration) string {
 }
 
 func clamp(v, lo, hi float64) float64 {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
+
+func clampInt(v, lo, hi int) int {
 	if v < lo {
 		return lo
 	}
