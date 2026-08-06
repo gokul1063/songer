@@ -12,6 +12,7 @@ import (
 
 	"songer/pkg/autoplay"
 	"songer/pkg/config"
+	"songer/pkg/library"
 	"songer/pkg/mpv"
 	"songer/pkg/search"
 )
@@ -60,11 +61,14 @@ type Model struct {
 	pendingSeed  string
 	focus        focus
 	listScroll   int
+	lib          *library.Library
+	fav          bool
+	liked        bool
 }
 
 const maxQueue = 60
 
-func Run(ctx context.Context, player *mpv.Player, current search.Video, theme config.Theme, perNode, depth int) error {
+func Run(ctx context.Context, player *mpv.Player, current search.Video, theme config.Theme, perNode, depth int, lib *library.Library) error {
 	m := Model{
 		player:  player,
 		theme:   theme,
@@ -75,6 +79,12 @@ func Run(ctx context.Context, player *mpv.Player, current search.Video, theme co
 		depth:   depth,
 		focus:   focusQueue,
 		state:   player.State(),
+		lib:     lib,
+	}
+	if lib != nil {
+		_ = lib.RecordPlay(current)
+		m.fav = lib.IsFavorite(current.ID)
+		m.liked = lib.IsLiked(current.ID)
 	}
 	m.wave = nextWave(waveCount(80))
 
@@ -238,9 +248,13 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "-", "_":
 		m.player.SetVolume(m.state.Volume - 5)
 		return m, nil
-	case "?":
-		m.showHelp = true
+	case "?", "/":
+		m.showHelp = !m.showHelp
 		return m, nil
+	case "f":
+		return m.toggleFavorite()
+	case "g":
+		return m.toggleLiked()
 	}
 
 	if m.focus != focusQueue {
@@ -281,6 +295,16 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// onPlayed records a play in history and refreshes the fav/liked flags.
+func (m Model) onPlayed(v search.Video) Model {
+	if m.lib != nil {
+		_ = m.lib.RecordPlay(v)
+		m.fav = m.lib.IsFavorite(v.ID)
+		m.liked = m.lib.IsLiked(v.ID)
+	}
+	return m
+}
+
 func (m Model) advanceNext() (tea.Model, tea.Cmd) {
 	if len(m.upcoming) == 0 {
 		m.status = "end of queue"
@@ -289,6 +313,7 @@ func (m Model) advanceNext() (tea.Model, tea.Cmd) {
 	v := m.upcoming[0]
 	m.upcoming = m.upcoming[1:]
 	m.current = v
+	m = m.onPlayed(v)
 	m.state.Ended = false
 	m.status = "▶ " + v.Title
 	m.queueIdx = 0
@@ -311,6 +336,7 @@ func (m Model) playFrom(i int) (tea.Model, tea.Cmd) {
 	v := m.upcoming[i]
 	m.upcoming = append(append([]search.Video{}, m.upcoming[:i]...), m.upcoming[i+1:]...)
 	m.current = v
+	m = m.onPlayed(v)
 	m.state.Ended = false
 	m.status = "▶ " + v.Title
 	if i >= len(m.upcoming) {
@@ -352,6 +378,38 @@ func (m Model) moveQueue(dir int) (tea.Model, tea.Cmd) {
 	m.upcoming[m.queueIdx], m.upcoming[swap] = m.upcoming[swap], m.upcoming[m.queueIdx]
 	m.queueIdx = swap
 	m.listScroll = clampScroll(m.listScroll, m.queueIdx, listVisible(m.height-2), len(m.upcoming))
+	return m, nil
+}
+
+func (m Model) toggleFavorite() (tea.Model, tea.Cmd) {
+	if m.lib == nil {
+		return m, nil
+	}
+	if m.fav {
+		_ = m.lib.RemoveFavorite(m.current.ID)
+		m.fav = false
+		m.status = "removed from favorites"
+	} else {
+		_ = m.lib.AddFavorite(m.current)
+		m.fav = true
+		m.status = "♥ added to favorites"
+	}
+	return m, nil
+}
+
+func (m Model) toggleLiked() (tea.Model, tea.Cmd) {
+	if m.lib == nil {
+		return m, nil
+	}
+	if m.liked {
+		_ = m.lib.RemoveLiked(m.current.ID)
+		m.liked = false
+		m.status = "removed from liked"
+	} else {
+		_ = m.lib.AddLiked(m.current)
+		m.liked = true
+		m.status = "★ added to liked"
+	}
 	return m, nil
 }
 
@@ -413,7 +471,7 @@ func (m Model) headerView(w int) string {
 
 func (m Model) footerView(w int) string {
 	th := m.theme
-	hints := []string{"q quit", "space pause", "n next", "] +5s", "[ -5s"}
+	hints := []string{"q quit", "space pause", "n next", "] +5s", "[ -5s", "f fav", "g like"}
 	if m.focus == focusQueue {
 		hints = append(hints, "j/k nav", "ctrl+j/k move", "d delete", "enter play", "ctrl+h main")
 	} else {
@@ -473,10 +531,17 @@ func (m Model) mainView(w, h int) string {
 	progressLine = lipgloss.NewStyle().Width(w).Render(progressLine)
 
 	// song name under the bar
+	marks := ""
+	if m.fav {
+		marks += "♥ "
+	}
+	if m.liked {
+		marks += "★ "
+	}
 	songLine := lipgloss.NewStyle().
 		Foreground(lipgloss.Color(th.Primary)).
 		Bold(true).
-		Render(sym + "  " + truncate(title, w-6))
+		Render(sym + "  " + marks + truncate(title, w-8))
 
 	statusWord := "playing"
 	if m.state.Paused {
@@ -593,21 +658,21 @@ func (m Model) sideView(w, h int) string {
 func (m Model) helpView() string {
 	th := m.theme
 	rows := [][2]string{
-		{"q", "quit"},
+		{"q / ctrl+c", "quit"},
 		{"space / p", "play / pause"},
-		{"n", "next song"},
-		{"]", "+5s"},
-		{"[", "-5s"},
-		{"}", "+10s"},
-		{"{", "-10s"},
+		{"n", "next song (plays list head)"},
+		{"] / [", "+5s / -5s"},
+		{"} / {", "+10s / -10s"},
 		{"h / l", "-5s / +5s (main area)"},
 		{"j / k", "navigate queue"},
 		{"ctrl+j / ctrl+k", "move song up / down"},
 		{"d", "delete focused song"},
 		{"enter", "play selected"},
-		{"ctrl+h / ctrl+l", "focus 70 / 30 (main / queue)"},
+		{"ctrl+h / ctrl+l", "focus main / focus list"},
 		{"+ / -", "volume"},
-		{"?", "this help"},
+		{"f", "add current to favorites"},
+		{"g", "add current to liked"},
+		{"? / /", "this help"},
 	}
 	var b strings.Builder
 	b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(th.Primary)).Render("SONGER — KEYS\n\n"))

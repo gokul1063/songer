@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"text/tabwriter"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"songer/pkg/autoplay"
 	"songer/pkg/config"
 	"songer/pkg/download"
+	"songer/pkg/library"
 	"songer/pkg/mpv"
 	"songer/pkg/play"
 	"songer/pkg/search"
@@ -33,20 +35,41 @@ func main() {
 	workers := flag.Int("workers", 3, "number of concurrent downloads")
 	mp3 := flag.Bool("mp3", false, "convert downloads to mp3")
 	tuiMode := flag.Bool("tui", false, "launch the keyboard-driven TUI")
+	favorite := flag.Bool("favorite", false, "add the selected song to favorites")
+	liked := flag.Bool("liked", false, "add the selected song to liked")
+	playlistName := flag.String("playlist", "", "add the selected song to a playlist (creates it if needed)")
+	view := flag.String("view", "", "list a collection: favorites, liked, history, playlists, playlist:<name>")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "songer - play songs from YouTube\n\n")
-		fmt.Fprintf(os.Stderr, "Usage:\n  songer --source \"song name\" [flags]\n\nFlags:\n")
+		fmt.Fprintf(os.Stderr, "Usage:\n  songer --source \"song name\" [flags]\n  songer --view favorites|liked|history|playlists|playlist:<name> [--rank N]\n\nFlags:\n")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
 
-	if *source == "" {
+	if *source == "" && *view == "" {
 		flag.Usage()
 		os.Exit(1)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	var lib *library.Library
+	if l, err := library.Load(); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: library: %v\n", err)
+	} else {
+		lib = l
+	}
+
+	if *view != "" {
+		runView(ctx, lib, *view, *rank, *video, *noPlay)
+		return
+	}
+
+	if *source == "" {
+		flag.Usage()
+		os.Exit(1)
+	}
 
 	client := search.NewClient()
 	searchStart := time.Now()
@@ -69,15 +92,39 @@ func main() {
 	}
 	tw.Flush()
 
-	if *noPlay {
-		return
-	}
-
 	if *rank < 1 || *rank > len(videos) {
 		fmt.Fprintf(os.Stderr, "error: --rank %d out of range (1-%d)\n", *rank, len(videos))
 		os.Exit(1)
 	}
 	target := videos[*rank-1]
+
+	if lib != nil {
+		if *favorite {
+			if err := lib.AddFavorite(target); err != nil {
+				fmt.Fprintf(os.Stderr, "favorite error: %v\n", err)
+			} else {
+				fmt.Println("♥ added to favorites")
+			}
+		}
+		if *liked {
+			if err := lib.AddLiked(target); err != nil {
+				fmt.Fprintf(os.Stderr, "liked error: %v\n", err)
+			} else {
+				fmt.Println("★ added to liked")
+			}
+		}
+		if *playlistName != "" {
+			if err := lib.AddToPlaylist(*playlistName, target); err != nil {
+				fmt.Fprintf(os.Stderr, "playlist error: %v\n", err)
+			} else {
+				fmt.Printf("♺ added to playlist %q\n", *playlistName)
+			}
+		}
+	}
+
+	if *noPlay {
+		return
+	}
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -86,7 +133,7 @@ func main() {
 	}
 
 	if *tuiMode {
-		if err := runTUI(ctx, cfg, target); err != nil {
+		if err := runTUI(ctx, cfg, target, lib); err != nil {
 			if ctx.Err() != nil {
 				fmt.Fprintln(os.Stderr, "stopped")
 			} else {
@@ -117,6 +164,10 @@ func main() {
 		}
 	}
 
+	if lib != nil {
+		_ = lib.RecordPlay(target)
+	}
+
 	fmt.Printf("\n▶ Playing [%d] %s\n", *rank, target.Title)
 	_, err = play.Play(ctx, target, play.Options{
 		Video: *video,
@@ -127,6 +178,65 @@ func main() {
 		},
 	})
 	if err != nil {
+		if ctx.Err() != nil {
+			fmt.Fprintln(os.Stderr, "stopped")
+		} else {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+	}
+}
+
+func runView(ctx context.Context, lib *library.Library, view string, rank int, video, noPlay bool) {
+	if lib == nil {
+		fmt.Fprintln(os.Stderr, "library unavailable")
+		os.Exit(1)
+	}
+
+	var entries []library.Entry
+	switch {
+	case view == "favorites":
+		entries = lib.Favorites
+	case view == "liked":
+		entries = lib.Liked
+	case view == "history":
+		entries = lib.History
+	case view == "playlists":
+		names := lib.PlaylistNames()
+		if len(names) == 0 {
+			fmt.Println("no playlists yet")
+			return
+		}
+		for _, n := range names {
+			fmt.Printf("♺ %s (%d)\n", n, len(lib.Playlist(n)))
+		}
+		return
+	case strings.HasPrefix(view, "playlist:"):
+		entries = lib.Playlist(strings.TrimPrefix(view, "playlist:"))
+	default:
+		fmt.Fprintf(os.Stderr, "unknown view %q\n", view)
+		os.Exit(1)
+	}
+
+	if len(entries) == 0 {
+		fmt.Println("nothing here yet")
+		return
+	}
+
+	tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+	for i, e := range entries {
+		fmt.Fprintf(tw, "[%d]\t%s\t%s\t%s\n", i+1, e.Video.Title, e.Video.Channel, e.Video.URL)
+	}
+	tw.Flush()
+
+	if noPlay || rank < 1 || rank > len(entries) {
+		return
+	}
+	target := entries[rank-1].Video
+	_ = lib.RecordPlay(target)
+
+	fmt.Printf("\n▶ Playing [%d] %s\n", rank, target.Title)
+	if _, err := play.Play(ctx, target, play.Options{Video: video}); err != nil {
 		if ctx.Err() != nil {
 			fmt.Fprintln(os.Stderr, "stopped")
 		} else {
@@ -172,7 +282,7 @@ func doDownloads(ctx context.Context, videos []search.Video, target search.Video
 	fmt.Printf("✓ saved → %s\n", path)
 }
 
-func runTUI(ctx context.Context, cfg config.Config, target search.Video) error {
+func runTUI(ctx context.Context, cfg config.Config, target search.Video, lib *library.Library) error {
 	socket := filepath.Join(os.TempDir(), fmt.Sprintf("songer-%d.sock", os.Getpid()))
 	player, err := mpv.New(ctx, target.URL, socket, cfg.Player.Volume)
 	if err != nil {
@@ -184,6 +294,5 @@ func runTUI(ctx context.Context, cfg config.Config, target search.Video) error {
 	defer player.Close()
 
 	fmt.Fprintf(os.Stderr, "♫ Now playing: %s\n", target.Title)
-	return tui.Run(ctx, player, target, cfg.ThemeFor(cfg.UI.Theme), cfg.Autoplay.PerNode, cfg.Autoplay.Depth)
+	return tui.Run(ctx, player, target, cfg.ThemeFor(cfg.UI.Theme), cfg.Autoplay.PerNode, cfg.Autoplay.Depth, lib)
 }
-

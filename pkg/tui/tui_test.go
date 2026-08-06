@@ -11,6 +11,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"songer/pkg/library"
 	"songer/pkg/mpv"
 	"songer/pkg/search"
 )
@@ -220,6 +221,28 @@ func TestSeekKeysNotInQueue(t *testing.T) {
 	_, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
 	if len(fp.seeked) != 0 {
 		t.Fatalf("h/l should not seek when queue focused, got %v", fp.seeked)
+	}
+}
+
+func TestToggleFavorite(t *testing.T) {
+	lib, err := library.Open(filepath.Join(t.TempDir(), "lib.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := testModel(nil, 0)
+	m.lib = lib
+	m.current = search.Video{ID: "x", Title: "X"}
+
+	updated, _ := m.toggleFavorite()
+	nm := updated.(Model)
+	if !nm.fav || !nm.lib.IsFavorite("x") {
+		t.Fatal("favorite not added")
+	}
+
+	updated, _ = nm.toggleFavorite()
+	nm = updated.(Model)
+	if nm.fav || nm.lib.IsFavorite("x") {
+		t.Fatal("favorite not removed")
 	}
 }
 

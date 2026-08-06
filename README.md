@@ -25,6 +25,8 @@ downloading.
   equalizer, moving seekbar, focusable panels, zero mouse.
 - **Async downloads** — concurrent yt-dlp downloads via a worker pool, with
   live progress and optional MP3 conversion.
+- **Your library** — favorites, liked songs, playlists, and a play history,
+  persisted to `~/.config/songer/library.json`.
 - **Themes** — every color lives in a TOML config (`opencode` theme included).
 - **Fast CLI** — search, play, queue, and download are all one command away.
 
@@ -90,6 +92,10 @@ songer --source "song name" [flags]
 | `--download-dir` | `downloads` | where downloads are saved |
 | `--workers` | `3` | concurrent downloads |
 | `--mp3` | off | convert downloads to MP3 (needs ffmpeg) |
+| `--favorite` | off | add the selected song to favorites |
+| `--liked` | off | add the selected song to liked |
+| `--playlist` | — | add the selected song to a playlist (creates it if needed) |
+| `--view` | — | list a collection: `favorites`, `liked`, `history`, `playlists`, `playlist:<name>` |
 
 ### Examples
 
@@ -108,6 +114,18 @@ songer --source "song name" [flags]
 
 # download all 5 results concurrently (4 workers)
 ./songer --source "tame impala" --limit 5 --download-all --workers 4
+
+# add the first result to your favorites / liked / a playlist
+./songer --source "surf curse freak" --favorite --no-play
+./songer --source "surf curse freak" --liked --no-play
+./songer --source "surf curse freak" --playlist "chill" --no-play
+
+# list your collections (add --rank N to play an entry)
+./songer --view favorites
+./songer --view liked
+./songer --view history
+./songer --view playlists
+./songer --view playlist:chill --rank 1
 
 # TUI with video enabled
 ./songer --source "lofi" --tui --video
@@ -144,7 +162,9 @@ Layout (70 : 30):
 | `enter` | play the selected song |
 | `ctrl+h` / `ctrl+l` | focus main / focus list |
 | `+` / `-` | volume up / down |
-| `?` | toggle the help overlay |
+| `f` | add the current song to favorites |
+| `g` | add the current song to liked |
+| `?` / `/` | toggle the help overlay |
 
 Auto-play: when a song ends, the first item in the list plays next
 automatically and is removed from the list.
@@ -225,9 +245,11 @@ songer/
 - [x] Async downloads
 - [x] Keyboard-driven TUI
 - [x] TOML themes
-- [ ] Favorites / liked songs
-- [ ] Local library & playlists
-- [ ] Persisted session history
+- [x] Favorites / liked songs
+- [x] Playlists
+- [x] Play history
+- [ ] Local library & offline playlists
+- [ ] Persisted TUI session state
 
 ## Disclaimer
 
