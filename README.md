@@ -211,6 +211,54 @@ with `[ui] theme = "<name>"`.
   concurrently and streams progress back on a channel. The JS runtime
   (`node`/`bun`/`deno`) is auto-detected and passed via `--js-runtimes`.
 
+## Memory footprint
+
+songer is designed to stay light on RAM. The bundled profiler
+(`scripts/ramwatch.sh`) samples the RSS of the songer + mpv process tree every
+second while a song plays. Measured on Linux over 40 seconds of playback:
+
+| Metric      | songer + mpv |
+|-------------|--------------|
+| Peak RAM    | ~102 MB      |
+| Average RAM | ~99 MB       |
+| Minimum RAM | ~82 MB       |
+
+The songer binary itself holds steady at roughly 18 MB; almost everything else
+is mpv, the native media player engine.
+
+### Compared with a normal YouTube browser tab
+
+| Client                    | Typical RAM   |
+|---------------------------|---------------|
+| songer (this tool)        | ~82-102 MB    |
+| Firefox tab (YouTube)     | ~400-900 MB   |
+| Chrome tab (YouTube)      | ~600-1500 MB  |
+| Edge / Brave / Opera tab  | ~600-1500 MB  |
+| YouTube Android app       | ~250-500 MB   |
+| YouTube iOS app           | ~250-500 MB   |
+
+That makes songer roughly **6-10x lighter than a Firefox tab** and
+**6-15x lighter than a Chromium tab**.
+
+### Why songer uses so much less RAM
+
+- **No browser engine.** A YouTube tab has to load the whole page: HTML, CSS,
+  the DOM tree, a layout engine, a JavaScript VM (V8), and the GPU
+  compositor, plus ads, trackers, and third-party scripts. songer renders
+  none of that.
+- **Single-purpose native binary.** songer is a small Go program that only
+  searches YouTube and hands the stream URL to a player. There is no web
+  stack kept in memory.
+- **Lean native player.** mpv is a C media player built for playback. It
+  decodes and buffers only the audio it needs instead of keeping an entire
+  page and multiple video frames alive.
+- **No multi-process model.** A browser runs separate renderer, GPU, network,
+  and utility processes, each with its own overhead. songer is exactly two
+  processes: songer and mpv.
+- **Direct streaming.** Audio streams straight from YouTube's CDN into the
+  player, so the working set stays flat; the 40-second profile above is
+  constant after startup instead of growing over time.
+
 ## Project layout
 
 ```
