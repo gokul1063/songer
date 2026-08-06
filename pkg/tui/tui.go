@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-runewidth"
+	"github.com/muesli/reflow/ansi"
 
 	"songer/pkg/autoplay"
 	"songer/pkg/config"
@@ -417,10 +418,31 @@ func (m Model) View() string {
 	if m.width == 0 {
 		return "songer — loading…"
 	}
+	base := m.baseView()
 	if m.showHelp {
-		return m.helpView()
+		box := m.helpBox()
+		boxLines := strings.Split(box, "\n")
+		boxW := 0
+		for _, l := range boxLines {
+			if w := ansi.PrintableRuneWidth(l); w > boxW {
+				boxW = w
+			}
+		}
+		boxH := len(boxLines)
+		x := (m.width - boxW) / 2
+		if x < 0 {
+			x = 0
+		}
+		y := (m.height - boxH) / 2
+		if y < 1 {
+			y = 1
+		}
+		return overlayWindow(base, box, x, y)
 	}
+	return base
+}
 
+func (m Model) baseView() string {
 	bodyH := m.height - 2
 	if bodyH < 4 {
 		bodyH = 4
@@ -655,7 +677,7 @@ func (m Model) sideView(w, h int) string {
 		Render(content)
 }
 
-func (m Model) helpView() string {
+func (m Model) helpBox() string {
 	th := m.theme
 	rows := [][2]string{
 		{"q / ctrl+c", "quit"},
@@ -675,16 +697,18 @@ func (m Model) helpView() string {
 		{"? / /", "this help"},
 	}
 	var b strings.Builder
-	b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(th.Primary)).Render("SONGER — KEYS\n\n"))
+	b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(th.Primary)).Render("CONTROLS\n"))
 	for _, r := range rows {
-		key := lipgloss.NewStyle().Foreground(lipgloss.Color(th.Accent)).Bold(true).Render(fmt.Sprintf("%-10s", r[0]))
-		b.WriteString(key + " " + r[1] + "\n")
+		key := lipgloss.NewStyle().Foreground(lipgloss.Color(th.Accent)).Bold(true).Render(fmt.Sprintf("%-16s", r[0]))
+		b.WriteString(key + r[1] + "\n")
 	}
-	b.WriteString("\n" + lipgloss.NewStyle().Foreground(lipgloss.Color(th.Muted)).Render("no mouse — everything is keys") + "\n")
+	b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(th.Muted)).Render("? toggles this window"))
 	return lipgloss.NewStyle().
-		Width(m.width).
-		Height(m.height).
-		Padding(2).
+		Width(52).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color(th.Selection)).
+		Background(lipgloss.Color(th.Surface)).
+		Padding(1, 2).
 		Render(b.String())
 }
 
