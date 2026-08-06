@@ -534,7 +534,7 @@ func (m Model) mainView(w, h int) string {
 	th := m.theme
 	var content string
 	if m.page == pagePlaylist {
-		content = m.playlistView(w, h)
+		content = m.playlistView(w)
 	} else {
 		content = m.nowPlayingContent(w, h)
 	}
@@ -649,7 +649,7 @@ func (m Model) nowPlayingContent(w, h int) string {
 
 // playlistView renders the playlist page: favorite/liked boxes, custom
 // playlists, and a trailing "new playlist" (+) box.
-func (m Model) playlistView(w, h int) string {
+func (m Model) playlistView(w int) string {
 	th := m.theme
 	var boxes []string
 	boxes = append(boxes, playlistBox("★", "Favorites", th))
@@ -680,7 +680,6 @@ func (m Model) playlistView(w, h int) string {
 	hint := lipgloss.NewStyle().Foreground(lipgloss.Color(th.Muted)).Render("tab switches view • + adds a playlist")
 	return lipgloss.NewStyle().
 		Width(w).
-		Height(h).
 		Align(lipgloss.Center).
 		Render(lipgloss.JoinVertical(lipgloss.Center, title, "\n", grid, "\n", hint))
 }

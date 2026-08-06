@@ -284,10 +284,31 @@ func TestPlaylistView(t *testing.T) {
 	m.lib = lib
 	m.page = pagePlaylist
 
-	out := m.playlistView(60, 18)
+	out := m.playlistView(60)
 	for _, want := range []string{"★", "♥", "＋", "Favorites", "Liked", "chill", "PLAYLISTS"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("playlist view missing %q\n%s", want, out)
+		}
+	}
+}
+
+// TestHeaderSurvivesPlaylistPage guards against the header scrolling off
+// screen: switching pages must never make the base view taller than the
+// terminal.
+func TestHeaderSurvivesPlaylistPage(t *testing.T) {
+	for _, page := range []page{pageMain, pagePlaylist} {
+		m := testModel(nil, 0)
+		m.width = 100
+		m.height = 24
+		m.page = page
+		out := m.baseView()
+		lines := strings.Split(out, "\n")
+		if len(lines) > m.height {
+			t.Errorf("page %d: base view is %d rows, terminal is %d (header scrolled off)",
+				page, len(lines), m.height)
+		}
+		if !strings.Contains(out, "SONGER") {
+			t.Errorf("page %d: header missing", page)
 		}
 	}
 }
