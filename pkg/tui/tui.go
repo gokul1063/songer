@@ -65,15 +65,14 @@ const maxQueue = 60
 
 func Run(ctx context.Context, player *mpv.Player, current search.Video, theme config.Theme, perNode, depth int) error {
 	m := Model{
-		player:   player,
-		theme:    theme,
-		ctx:      ctx,
-		current:  current,
-		upcoming: []search.Video{current},
-		status:   "▶ " + current.Title,
-		perNode:  perNode,
-		depth:    depth,
-		focus:    focusQueue,
+		player:  player,
+		theme:   theme,
+		ctx:     ctx,
+		current: current,
+		status:  "▶ " + current.Title,
+		perNode: perNode,
+		depth:   depth,
+		focus:   focusQueue,
 	}
 	m.wave = nextWave(waveCount(80))
 
@@ -286,6 +285,7 @@ func (m Model) advanceNext() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	v := m.upcoming[0]
+	m.upcoming = m.upcoming[1:]
 	m.current = v
 	m.state.Ended = false
 	m.status = "▶ " + v.Title
@@ -301,17 +301,23 @@ func (m Model) playSelected() (tea.Model, tea.Cmd) {
 	return m.playFrom(m.queueIdx)
 }
 
-// playFrom plays the song at index i, moving it to the front of the list.
+// playFrom plays the song at index i, removing it from the queue entirely.
 func (m Model) playFrom(i int) (tea.Model, tea.Cmd) {
 	if i < 0 || i >= len(m.upcoming) {
 		return m, nil
 	}
 	v := m.upcoming[i]
-	m.upcoming = append(append([]search.Video{v}, m.upcoming[:i]...), m.upcoming[i+1:]...)
+	m.upcoming = append(append([]search.Video{}, m.upcoming[:i]...), m.upcoming[i+1:]...)
 	m.current = v
 	m.state.Ended = false
 	m.status = "▶ " + v.Title
-	m.queueIdx = 0
+	if i >= len(m.upcoming) {
+		i = len(m.upcoming) - 1
+	}
+	if i < 0 {
+		i = 0
+	}
+	m.queueIdx = i
 	m.listScroll = 0
 	m.player.Load(v.URL)
 	var fetch tea.Cmd
@@ -383,12 +389,8 @@ func (m Model) mainView(w int) string {
 	if m.state.Paused {
 		sym = "⏸"
 	}
-	header := lipgloss.NewStyle().
-		Foreground(lipgloss.Color(th.Primary)).
-		Bold(true).
-		Render(sym + "  " + truncate(title, w-6))
 
-	waveRows := m.height - 6
+	waveRows := m.height - 8
 	if waveRows < 3 {
 		waveRows = 3
 	}
@@ -407,6 +409,12 @@ func (m Model) mainView(w int) string {
 	bar := progressBar(m.state.Position, m.state.Duration, barW, th.Progress, th.Track)
 	times := lipgloss.NewStyle().Foreground(lipgloss.Color(th.Muted)).Render(fmtDur(m.state.Position) + " / " + fmtDur(m.state.Duration))
 	progressLine := lipgloss.NewStyle().Width(w).Render(bar + "  " + times)
+
+	// song name under the bar
+	songLine := lipgloss.NewStyle().
+		Foreground(lipgloss.Color(th.Primary)).
+		Bold(true).
+		Render(sym + "  " + truncate(title, w-6))
 
 	statusWord := "playing"
 	if m.state.Paused {
@@ -428,9 +436,9 @@ func (m Model) mainView(w int) string {
 		Render(truncate(details, w-2))
 
 	content := lipgloss.JoinVertical(lipgloss.Center,
-		header,
 		wave,
 		progressLine,
+		songLine,
 		detailsLine,
 	)
 	return lipgloss.NewStyle().

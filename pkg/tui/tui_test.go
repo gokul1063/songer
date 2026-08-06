@@ -94,8 +94,8 @@ func TestAdvanceOnEnd(t *testing.T) {
 	if nm.current.ID != "b" {
 		t.Fatalf("expected current B, got %s", nm.current.ID)
 	}
-	// the played song stays at the front of the list, rest unchanged
-	if len(nm.upcoming) != 2 || nm.upcoming[0].ID != "b" || nm.upcoming[1].ID != "c" {
+	// the played song is removed from the list entirely
+	if len(nm.upcoming) != 1 || nm.upcoming[0].ID != "c" {
 		t.Fatalf("unexpected queue after advance: %+v", nm.upcoming)
 	}
 	if fp.loaded != "u2" {
@@ -106,7 +106,7 @@ func TestAdvanceOnEnd(t *testing.T) {
 	}
 }
 
-func TestPlayFromMovesToFront(t *testing.T) {
+func TestPlayFromRemovesFromList(t *testing.T) {
 	fp := &fakePlayer{}
 	m := testModel([]search.Video{{ID: "a", Title: "A"}, {ID: "b", Title: "B"}, {ID: "c", Title: "C"}, {ID: "d", Title: "D"}}, 2)
 	m.player = fp
@@ -117,15 +117,15 @@ func TestPlayFromMovesToFront(t *testing.T) {
 	for _, v := range nm.upcoming {
 		got = append(got, v.ID)
 	}
-	want := []string{"c", "a", "b", "d"}
+	want := []string{"a", "b", "d"}
 	if !slices.Equal(got, want) {
-		t.Fatalf("playFrom should move c to front: got %v want %v", got, want)
+		t.Fatalf("playFrom should remove c: got %v want %v", got, want)
 	}
 	if nm.current.ID != "c" {
 		t.Fatalf("current = %s, want c", nm.current.ID)
 	}
-	if nm.queueIdx != 0 || nm.listScroll != 0 {
-		t.Fatalf("queueIdx=%d scroll=%d, want 0/0", nm.queueIdx, nm.listScroll)
+	if nm.queueIdx != 2 {
+		t.Fatalf("queueIdx = %d, want 2 (item d shifted into place)", nm.queueIdx)
 	}
 }
 
