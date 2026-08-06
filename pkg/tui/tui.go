@@ -143,11 +143,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		m.wave = nextWave(waveCount(msg.Width))
+		m.wave = nextWave(waveCount(msg.Width*70/100))
 		m.listScroll = clampScroll(m.listScroll, m.queueIdx, listVisible(m.height-2), len(m.upcoming))
 		return m, nil
 	case waveTick:
-		m.wave = nextWave(waveCount(m.width))
+		m.wave = nextWave(waveCount(m.width*70/100))
 		return m, waveCmd()
 	case queueLoadedMsg:
 		m.queuePending = false
@@ -396,7 +396,7 @@ func (m Model) headerView(w int) string {
 	if m.focus == focusMain {
 		focus = "main"
 	}
-	left := "♫ SONGER"
+	left := "SONGER"
 	right := fmt.Sprintf("▸ %s • vol %d%% • [%s]", state, m.state.Volume, focus)
 	pad := w - runewidth.StringWidth(left) - runewidth.StringWidth(right)
 	if pad < 1 {
@@ -415,9 +415,9 @@ func (m Model) footerView(w int) string {
 	th := m.theme
 	hints := []string{"q quit", "space pause", "n next", "] +5s", "[ -5s"}
 	if m.focus == focusQueue {
-		hints = append(hints, "j/k nav", "ctrl+j/k move", "d delete", "enter play", "ctrl+l main")
+		hints = append(hints, "j/k nav", "ctrl+j/k move", "d delete", "enter play", "ctrl+h main")
 	} else {
-		hints = append(hints, "h/l seek", "ctrl+h list")
+		hints = append(hints, "h/l seek", "ctrl+l list")
 	}
 	hints = append(hints, "? help")
 	line := truncate(strings.Join(hints, "   "), w)
@@ -443,12 +443,13 @@ func (m Model) mainView(w, h int) string {
 		sym = "⏸"
 	}
 
-	waveRows := h - 8
+	contentH := h - 2
+	waveRows := contentH * 45 / 100
 	if waveRows < 3 {
 		waveRows = 3
 	}
-	if waveRows > 20 {
-		waveRows = 20
+	if waveRows > 22 {
+		waveRows = 22
 	}
 	wave := lipgloss.NewStyle().
 		Width(w - 2).
@@ -496,7 +497,22 @@ func (m Model) mainView(w, h int) string {
 		Foreground(lipgloss.Color(th.Muted)).
 		Render(truncate(details, w-2))
 
-	content := lipgloss.JoinVertical(lipgloss.Center, wave, progressLine, songLine, detailsLine)
+	used := waveRows + 6 // bar + name + details + 3 blank spacers
+	topPad := (contentH - used) / 2
+	if topPad < 0 {
+		topPad = 0
+	}
+	topSpacer := lipgloss.NewStyle().Height(topPad).Render("")
+	content := lipgloss.JoinVertical(lipgloss.Center,
+		topSpacer,
+		wave,
+		"",
+		progressLine,
+		"",
+		songLine,
+		"",
+		detailsLine,
+	)
 
 	border := lipgloss.RoundedBorder()
 	borderColor := th.Border
@@ -607,8 +623,9 @@ func (m Model) helpView() string {
 		Render(b.String())
 }
 
-func waveCount(width int) int {
-	n := width * 70 / 100 / 2
+// waveCount is how many wave bars fit the main panel width, with small side padding.
+func waveCount(mainW int) int {
+	n := mainW - 8
 	if n < 4 {
 		n = 4
 	}

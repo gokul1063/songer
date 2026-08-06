@@ -75,8 +75,8 @@ func TestLerpColor(t *testing.T) {
 }
 
 func TestWaveCount(t *testing.T) {
-	if c := waveCount(80); c != 28 {
-		t.Errorf("waveCount(80) = %d, want 28", c)
+	if c := waveCount(56); c != 48 {
+		t.Errorf("waveCount(56) = %d, want 48", c)
 	}
 	if c := waveCount(10); c < 4 {
 		t.Errorf("waveCount(10) = %d, want >= 4", c)
