@@ -11,27 +11,22 @@ import (
 	"os/exec"
 	"sync"
 	"time"
+
+	"songer/pkg/player"
 )
 
-type State struct {
-	Paused   bool
-	Position time.Duration
-	Duration time.Duration
-	Volume   int
-	Title    string
-	Ended    bool
-}
+type State = player.State
 
 type Player struct {
-	ctx       context.Context
-	cmd       *exec.Cmd
-	socket    string
-	conn      net.Conn
-	mu        sync.Mutex
-	state     State
-	events    chan State
-	closed    bool
-	lastPush  time.Time
+	ctx      context.Context
+	cmd      *exec.Cmd
+	socket   string
+	conn     net.Conn
+	mu       sync.Mutex
+	state    State
+	events   chan State
+	closed   bool
+	lastPush time.Time
 }
 
 // New returns a player that drives mpv over its JSON IPC socket.

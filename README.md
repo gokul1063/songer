@@ -5,9 +5,9 @@ YouTube. Type a song name, hit enter, and audio starts playing in seconds —
 no accounts, no API keys, no payments.
 
 `songer` talks directly to YouTube's own internal (InnerTube) API to search and
-to find related songs, plays through **mpv**, and ships a fully
-keyboard-controlled **TUI** with a live equalizer, a real-time queue, and async
-downloading.
+to find related songs, plays through **mpv** (or a running **cmus** instance
+with `--cmus`), and ships a fully keyboard-controlled **TUI** with a live
+equalizer, a real-time queue, and async downloading.
 
 ```
 ```
@@ -35,13 +35,15 @@ downloading.
 | Dependency | Needed for | Notes |
 |-----------|-----------|-------|
 | Go ≥ 1.24 | building | |
-| [mpv](https://mpv.io) | playback | the player engine |
-| [yt-dlp](https://github.com/yt-dlp/yt-dlp) | downloads only | |
+| [mpv](https://mpv.io) | playback | the default player engine |
+| [cmus](https://cmus.github.io) | playback | optional, for `--cmus` (must already be running) |
+| [yt-dlp](https://github.com/yt-dlp/yt-dlp) | `--cmus` playback + downloads | resolves streams / downloads |
 | ffmpeg | MP3 conversion only | `--mp3` |
 | node / bun / deno | downloads only | yt-dlp JS runtime for YouTube |
 
-Playback needs only `mpv`. Downloads additionally need `yt-dlp` (+ a JS runtime
-for modern yt-dlp) and optionally `ffmpeg`.
+Playback needs only `mpv`. With `--cmus`, playback needs a running `cmus`
+plus `yt-dlp` (to resolve the audio stream). Downloads additionally need
+`yt-dlp` (+ a JS runtime for modern yt-dlp) and optionally `ffmpeg`.
 
 ## Install
 
@@ -84,6 +86,7 @@ songer --source "song name" [flags]
 | `--limit` | `10` | max number of results to return |
 | `--rank` | `1` | play the Nth search result (1-based) |
 | `--tui` | off | launch the keyboard-driven TUI |
+| `--cmus` | off | play through a running `cmus` instance instead of mpv |
 | `--video` | off | play with video instead of audio-only |
 | `--no-play` | off | search only, do not start playback |
 | `--autoplay` | off | build + print the suggested queue (2 + 4 = 6) |
@@ -100,6 +103,12 @@ songer --source "song name" [flags]
 ### Examples
 
 ```sh
+# play through a running cmus instance instead of mpv
+./songer --source "surf curse freak" --cmus
+
+# TUI with cmus
+./songer --source "lofi" --tui --cmus
+
 # search only
 ./songer --source "the strokes" --no-play
 
@@ -203,10 +212,14 @@ with `[ui] theme = "<name>"`.
   endpoints (`/youtubei/v1/search`, `/youtubei/v1/next`) with the public
   web-client key (the same one YouTube's own frontend ships). No API key, no
   auth, no quota. The related-videos endpoint feeds the auto-play queue.
-- **Playback** — the TUI drives an `mpv` child process over its JSON IPC
-  socket (`--input-ipc-server`), observing `pause`, `time-pos`, `duration`,
-  `volume`, and `media-title`, and sending seek/load commands. `--idle=yes`
-  keeps mpv alive so the next song can be loaded on end-of-file.
+- **Playback** — by default the TUI drives an `mpv` child process over its
+  JSON IPC socket (`--input-ipc-server`), observing `pause`, `time-pos`,
+  `duration`, `volume`, and `media-title`, and sending seek/load commands.
+  `--idle=yes` keeps mpv alive so the next song can be loaded on end-of-file.
+  With `--cmus`, songer instead controls an already-running `cmus` via
+  `cmus-remote`: `yt-dlp` resolves each YouTube URL to a direct audio stream
+  (cmus can't talk to YouTube itself), which is queued and played, while
+  `cmus-remote -Q` is polled for position/duration/volume and end-of-stream.
 - **Downloads** — `yt-dlp` extracts the best audio; a worker pool downloads
   concurrently and streams progress back on a channel. The JS runtime
   (`node`/`bun`/`deno`) is auto-detected and passed via `--js-runtimes`.
@@ -225,6 +238,10 @@ second while a song plays. Measured on Linux over 40 seconds of playback:
 
 The songer binary itself holds steady at roughly 18 MB; almost everything else
 is mpv, the native media player engine.
+
+Want to go even lighter? `--cmus` swaps mpv for a `cmus` instance you already
+have running — cmus's daemon typically stays a fraction of mpv's RSS, so
+songer's own footprint approaches just the ~18 MB Go process.
 
 ### Compared with a normal YouTube browser tab
 
@@ -268,8 +285,10 @@ songer/
 └── pkg/
     ├── search/           # YouTube InnerTube search → []Video
     ├── autoplay/         # related-videos suggestions; BFS queue build (2+4=6)
-    ├── play/             # blocking mpv playback (CLI mode) with latency tracking
+    ├── play/             # blocking playback (CLI mode) with latency tracking
+    ├── player/           # shared player State + Player/Controller interfaces
     ├── mpv/              # mpv JSON-IPC controller (seek/pause/load/observe events)
+    ├── cmus/             # cmus-remote controller (stream resolve + state polling)
     ├── download/         # async yt-dlp downloads with worker pool + progress
     ├── tui/              # bubbletea UI (70/30 layout, wave, focus, keys, themes)
     └── config/           # TOML loading, themes

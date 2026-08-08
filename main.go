@@ -13,11 +13,13 @@ import (
 	"time"
 
 	"songer/pkg/autoplay"
+	"songer/pkg/cmus"
 	"songer/pkg/config"
 	"songer/pkg/download"
 	"songer/pkg/library"
 	"songer/pkg/mpv"
 	"songer/pkg/play"
+	"songer/pkg/player"
 	"songer/pkg/search"
 	"songer/pkg/tui"
 )
@@ -27,6 +29,7 @@ func main() {
 	limit := flag.Int("limit", 10, "max number of results to return")
 	rank := flag.Int("rank", 1, "play the Nth search result (1-based)")
 	video := flag.Bool("video", false, "play with video instead of audio-only")
+	cmusMode := flag.Bool("cmus", false, "play through a running cmus instance instead of mpv")
 	noPlay := flag.Bool("no-play", false, "search only, do not start playback")
 	doAutoplay := flag.Bool("autoplay", false, "build a suggested queue (2 + 4 = 6 videos) for the played song")
 	download := flag.Bool("download", false, "download the selected result and exit")
@@ -62,7 +65,7 @@ func main() {
 	}
 
 	if *view != "" {
-		runView(ctx, lib, *view, *rank, *video, *noPlay)
+		runView(ctx, lib, *view, *rank, *video, *cmusMode, *noPlay)
 		return
 	}
 
@@ -133,7 +136,7 @@ func main() {
 	}
 
 	if *tuiMode {
-		if err := runTUI(ctx, cfg, target, lib); err != nil {
+		if err := runTUI(ctx, cfg, target, lib, *cmusMode); err != nil {
 			if ctx.Err() != nil {
 				fmt.Fprintln(os.Stderr, "stopped")
 			} else {
@@ -171,10 +174,11 @@ func main() {
 	fmt.Printf("\n▶ Playing [%d] %s\n", *rank, target.Title)
 	_, err = play.Play(ctx, target, play.Options{
 		Video: *video,
+		Cmus:  *cmusMode,
 		OnStart: func(d time.Duration) {
 			fmt.Printf("✔ started in %s (search %s, total %s)\n",
 				d.Round(100*time.Millisecond), searchTime.Round(10*time.Millisecond),
-				(d+searchTime).Round(100*time.Millisecond))
+				(d + searchTime).Round(100*time.Millisecond))
 		},
 	})
 	if err != nil {
@@ -187,7 +191,7 @@ func main() {
 	}
 }
 
-func runView(ctx context.Context, lib *library.Library, view string, rank int, video, noPlay bool) {
+func runView(ctx context.Context, lib *library.Library, view string, rank int, video, cmusMode, noPlay bool) {
 	if lib == nil {
 		fmt.Fprintln(os.Stderr, "library unavailable")
 		os.Exit(1)
@@ -236,7 +240,7 @@ func runView(ctx context.Context, lib *library.Library, view string, rank int, v
 	_ = lib.RecordPlay(target)
 
 	fmt.Printf("\n▶ Playing [%d] %s\n", rank, target.Title)
-	if _, err := play.Play(ctx, target, play.Options{Video: video}); err != nil {
+	if _, err := play.Play(ctx, target, play.Options{Video: video, Cmus: cmusMode}); err != nil {
 		if ctx.Err() != nil {
 			fmt.Fprintln(os.Stderr, "stopped")
 		} else {
@@ -282,16 +286,33 @@ func doDownloads(ctx context.Context, videos []search.Video, target search.Video
 	fmt.Printf("✓ saved → %s\n", path)
 }
 
-func runTUI(ctx context.Context, cfg config.Config, target search.Video, lib *library.Library) error {
-	socket := filepath.Join(os.TempDir(), fmt.Sprintf("songer-%d.sock", os.Getpid()))
-	player, err := mpv.New(ctx, target.URL, socket, cfg.Player.Volume)
-	if err != nil {
-		return err
+func runTUI(ctx context.Context, cfg config.Config, target search.Video, lib *library.Library, cmusMode bool) error {
+	var player player.Player
+	closer := func() {}
+
+	if cmusMode {
+		p, err := cmus.New(ctx, cfg.Player.Volume)
+		if err != nil {
+			return err
+		}
+		if err := p.Start(target.URL); err != nil {
+			return err
+		}
+		player = p
+		closer = p.Close
+	} else {
+		socket := filepath.Join(os.TempDir(), fmt.Sprintf("songer-%d.sock", os.Getpid()))
+		p, err := mpv.New(ctx, target.URL, socket, cfg.Player.Volume)
+		if err != nil {
+			return err
+		}
+		if err := p.Start(); err != nil {
+			return err
+		}
+		player = p
+		closer = p.Close
 	}
-	if err := player.Start(); err != nil {
-		return err
-	}
-	defer player.Close()
+	defer closer()
 
 	fmt.Fprintf(os.Stderr, "♫ Now playing: %s\n", target.Title)
 	return tui.Run(ctx, player, target, cfg.ThemeFor(cfg.UI.Theme), cfg.Autoplay.PerNode, cfg.Autoplay.Depth, lib)

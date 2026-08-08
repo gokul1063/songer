@@ -16,18 +16,22 @@ import (
 	"songer/pkg/config"
 	"songer/pkg/library"
 	"songer/pkg/mpv"
+	"songer/pkg/player"
 	"songer/pkg/search"
 )
 
 type fakePlayer struct {
 	loaded string
 	seeked []time.Duration
+	state  player.State
 }
 
-func (f *fakePlayer) Load(url string)       { f.loaded = url }
-func (f *fakePlayer) TogglePause()          {}
-func (f *fakePlayer) Seek(d time.Duration)  { f.seeked = append(f.seeked, d) }
-func (f *fakePlayer) SetVolume(v int)       {}
+func (f *fakePlayer) Events() <-chan player.State { return nil }
+func (f *fakePlayer) State() player.State         { return f.state }
+func (f *fakePlayer) Load(url string)             { f.loaded = url }
+func (f *fakePlayer) TogglePause()                {}
+func (f *fakePlayer) Seek(d time.Duration)        { f.seeked = append(f.seeked, d) }
+func (f *fakePlayer) SetVolume(v int)             {}
 
 func testModel(upcoming []search.Video, idx int) Model {
 	return Model{
@@ -93,7 +97,7 @@ func TestAdvanceOnEnd(t *testing.T) {
 	m.player = fp
 	m.current = search.Video{ID: "a", Title: "A"}
 
-	updated, _ := m.Update(mpv.State{Ended: true})
+	updated, _ := m.Update(player.State{Ended: true})
 	nm := updated.(Model)
 	if nm.current.ID != "b" {
 		t.Fatalf("expected current B, got %s", nm.current.ID)
@@ -469,12 +473,12 @@ func TestRealPlayerAutoAdvance(t *testing.T) {
 	defer player.Close()
 
 	m := Model{
-		player: player,
-		ctx:    ctx,
-		current: search.Video{ID: "a", Title: "A", URL: fileA},
+		player:   player,
+		ctx:      ctx,
+		current:  search.Video{ID: "a", Title: "A", URL: fileA},
 		upcoming: []search.Video{{ID: "b", Title: "B", URL: fileB}},
-		perNode: 2,
-		depth:   2,
+		perNode:  2,
+		depth:    2,
 	}
 
 	deadline := time.After(25 * time.Second)

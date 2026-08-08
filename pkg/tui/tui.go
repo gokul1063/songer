@@ -14,7 +14,7 @@ import (
 	"songer/pkg/autoplay"
 	"songer/pkg/config"
 	"songer/pkg/library"
-	"songer/pkg/mpv"
+	"songer/pkg/player"
 	"songer/pkg/search"
 )
 
@@ -43,22 +43,15 @@ const (
 	pageCount = 2
 )
 
-// playerController is the slice of *mpv.Player the UI needs.
-type playerController interface {
-	Load(url string)
-	TogglePause()
-	Seek(d time.Duration)
-	SetVolume(v int)
-}
-
+// Model renders the TUI on top of any player backend (mpv, cmus, ...).
 type Model struct {
-	player       playerController
+	player       player.Player
 	theme        config.Theme
 	ctx          context.Context
 	current      search.Video
 	upcoming     []search.Video
 	queueIdx     int
-	state        mpv.State
+	state        player.State
 	wave         []float64
 	width        int
 	height       int
@@ -81,7 +74,7 @@ type Model struct {
 
 const maxQueue = 60
 
-func Run(ctx context.Context, player *mpv.Player, current search.Video, theme config.Theme, perNode, depth int, lib *library.Library) error {
+func Run(ctx context.Context, player player.Player, current search.Video, theme config.Theme, perNode, depth int, lib *library.Library) error {
 	m := Model{
 		player:  player,
 		theme:   theme,
@@ -166,11 +159,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		m.wave = nextWave(waveCount(msg.Width*70/100))
+		m.wave = nextWave(waveCount(msg.Width * 70 / 100))
 		m.listScroll = clampScroll(m.listScroll, m.queueIdx, listVisible(m.height-2), len(m.upcoming))
 		return m, nil
 	case waveTick:
-		m.wave = nextWave(waveCount(m.width*70/100))
+		m.wave = nextWave(waveCount(m.width * 70 / 100))
 		return m, waveCmd()
 	case queueLoadedMsg:
 		m.queuePending = false
@@ -196,7 +189,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.pendingSeed = ""
 		m.status = "autoplay: " + msg.err.Error()
 		return m, nil
-	case mpv.State:
+	case player.State:
 		m.state = msg
 		if msg.Ended {
 			return m.advanceNext()
