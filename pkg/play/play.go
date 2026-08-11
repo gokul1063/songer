@@ -15,7 +15,10 @@ import (
 	"songer/pkg/search"
 )
 
-const statusPrefix = "SONGER_TIME "
+const (
+	statusPrefix = "SONGER_TIME "
+	playTimeout  = 15 * time.Second
+)
 
 type Options struct {
 	Video   bool
@@ -79,20 +82,31 @@ func Play(ctx context.Context, video search.Video, opts Options) (*Session, erro
 	return sess, nil
 }
 
-// playCmus plays a stream through a running cmus instance. cmus has no native
-// YouTube support, so the direct audio URL is resolved with yt-dlp first.
+// playCmus plays a song through cmus, starting a background cmus if needed.
+// cmus (especially Debian's build) has no streaming/HTTP input plugin, so the
+// audio is downloaded first and played as a local file.
 func playCmus(ctx context.Context, video search.Video, opts Options) (*Session, error) {
 	if _, err := exec.LookPath("cmus-remote"); err != nil {
 		return nil, fmt.Errorf("cmus-remote not found: %w", err)
 	}
-	stream, err := cmus.ResolveStream(ctx, video.URL)
+	spawned, err := cmus.EnsureRunning(ctx)
 	if err != nil {
 		return nil, err
 	}
-	for _, c := range []string{"clear", "add -p " + stream, "player-play"} {
-		if err := cmus.Command(c); err != nil {
-			return nil, fmt.Errorf("cmus-remote: %w", err)
+	defer func() {
+		if spawned {
+			cmus.StopSpawned()
 		}
+	}()
+
+	path, err := cmus.Download(ctx, video.URL)
+	if err != nil {
+		return nil, err
+	}
+	defer os.Remove(path)
+
+	if err := cmus.PlayFile(path, 80); err != nil {
+		return nil, err
 	}
 
 	sess := &Session{Video: video}
@@ -119,8 +133,8 @@ func playCmus(ctx context.Context, video search.Video, opts Options) (*Session, 
 		if started && q.State == "stopped" {
 			return sess, nil
 		}
-		if !started && time.Since(start) > 15*time.Second {
-			return nil, fmt.Errorf("cmus did not start playback (check the stream URL)")
+		if !started && time.Since(start) > playTimeout {
+			return nil, fmt.Errorf("cmus did not start playback (download may have failed)")
 		}
 	}
 }
