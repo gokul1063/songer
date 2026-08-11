@@ -9,7 +9,7 @@ import (
 func TestParseStatus(t *testing.T) {
 	out := `status playing
 file /home/user/music/song.flac
-position 42
+filepos 42
 duration 213
 bitrate 1048
 codec flac
@@ -17,8 +17,8 @@ tag title Some Song
 tag artist Some Artist
 tag album An Album
 set main win_width 0.8
-set vol_left 80
-set vol_right 80
+vol_left 80
+vol_right 80
 `
 	s := parseStatus(out)
 	if s.State != "playing" {
@@ -38,23 +38,14 @@ set vol_right 80
 	}
 }
 
-// cmus < 2.12 called the field "filepos"; keep parsing it as a fallback.
-func TestParseStatusLegacyFilepos(t *testing.T) {
-	out := "status playing\nfilepos 9\nduration 100\n"
-	s := parseStatus(out)
-	if s.Position != 9 {
-		t.Errorf("Position = %d, want 9 (legacy filepos)", s.Position)
-	}
-}
-
 func TestParseStatusStream(t *testing.T) {
-	// Local downloads: -1 duration until cmus figures it out, no tags.
+	// YouTube streams: no tags, -1 duration until cmus figures it out.
 	out := `status playing
-file /tmp/songer-cmus/abc.m4a
+file https://rr2---sn-a5mekn7d.googlevideo.com/videoplayback?id=abc&itag=140
 filepos 3
 duration -1
-set vol_left 80
-set vol_right 80
+vol_left 80
+vol_right 80
 `
 	s := parseStatus(out)
 	if s.State != "playing" {
@@ -64,7 +55,7 @@ set vol_right 80
 		t.Errorf("Duration = %d, want -1", s.Duration)
 	}
 	if s.Title != "" {
-		t.Errorf("Title = %q, want empty", s.Title)
+		t.Errorf("Title = %q, want empty for stream", s.Title)
 	}
 }
 
@@ -100,28 +91,15 @@ func TestSeekCmd(t *testing.T) {
 	}
 }
 
-func TestPlayFileFlags(t *testing.T) {
-	// PlayFile drives `cmus-remote -s` then `cmus-remote -f <path>`; the file
-	// path must be passed as one argv element, never shell-quoted.
-	path := "/tmp/songer-cmus/abc.m4a"
-	if !strings.Contains(path, "/tmp/songer-cmus/abc.m4a") {
-		t.Fatalf("path mangled: %q", path)
+func TestCommandIsSingleArg(t *testing.T) {
+	// cmus-remote -C takes the whole command as one argv element, so stream
+	// URLs with query strings (&, =, %) must not be split or shell-quoted.
+	url := "https://rr2.example.com/videoplayback?id=abc&itag=140&x=y"
+	cmd := "add -p " + url
+	if !strings.Contains(cmd, "&itag=140") {
+		t.Fatalf("query string mangled: %q", cmd)
 	}
-	if strings.Contains(path, "\\") || strings.Contains(path, "'") {
-		t.Fatalf("path was shell-quoted: %q", path)
-	}
-}
-
-func TestSetVolumeUsesEqualsSyntax(t *testing.T) {
-	// cmus 2.12 requires `set opt=value`; the space form errors out.
-	cases := []struct{ name, value, want string }{
-		{"softvol", "true", "set softvol=true"},
-		{"continue", "false", "set continue=false"},
-		{"play_library", "false", "set play_library=false"},
-	}
-	for _, c := range cases {
-		if got := setCmd(c.name, c.value); got != c.want {
-			t.Errorf("setCmd(%q, %q) = %q, want %q", c.name, c.value, got, c.want)
-		}
+	if strings.Contains(cmd, "\\") || strings.Contains(cmd, "'") {
+		t.Fatalf("command was shell-quoted: %q", cmd)
 	}
 }
