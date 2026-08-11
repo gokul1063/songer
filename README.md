@@ -220,6 +220,11 @@ with `[ui] theme = "<name>"`.
   `cmus-remote`: `yt-dlp` resolves each YouTube URL to a direct audio stream
   (cmus can't talk to YouTube itself), which is queued and played, while
   `cmus-remote -Q` is polled for position/duration/volume and end-of-stream.
+  **Known limitation:** some cmus builds (Debian's in particular) ship no
+  streaming/HTTP input plugin, so the resolved stream URL can't be added and
+  `--cmus` stays silent — mpv playback is unaffected and always works. An
+  attempt to auto-spawn cmus and download-to-file instead was reverted; see
+  `notes/issues.md` #15.
 - **Downloads** — `yt-dlp` extracts the best audio; a worker pool downloads
   concurrently and streams progress back on a channel. The JS runtime
   (`node`/`bun`/`deno`) is auto-detected and passed via `--js-runtimes`.
