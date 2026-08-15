@@ -175,6 +175,7 @@ func main() {
 	_, err = play.Play(ctx, target, play.Options{
 		Video: *video,
 		Cmus:  *cmusMode,
+		Volume: cfg.Player.Volume,
 		OnStart: func(d time.Duration) {
 			fmt.Printf("✔ started in %s (search %s, total %s)\n",
 				d.Round(100*time.Millisecond), searchTime.Round(10*time.Millisecond),
@@ -192,6 +193,10 @@ func main() {
 }
 
 func runView(ctx context.Context, lib *library.Library, view string, rank int, video, cmusMode, noPlay bool) {
+	cfg, err := config.Load()
+	if err != nil {
+		cfg = config.Default()
+	}
 	if lib == nil {
 		fmt.Fprintln(os.Stderr, "library unavailable")
 		os.Exit(1)
@@ -240,7 +245,7 @@ func runView(ctx context.Context, lib *library.Library, view string, rank int, v
 	_ = lib.RecordPlay(target)
 
 	fmt.Printf("\n▶ Playing [%d] %s\n", rank, target.Title)
-	if _, err := play.Play(ctx, target, play.Options{Video: video, Cmus: cmusMode}); err != nil {
+	if _, err := play.Play(ctx, target, play.Options{Video: video, Cmus: cmusMode, Volume: cfg.Player.Volume}); err != nil {
 		if ctx.Err() != nil {
 			fmt.Fprintln(os.Stderr, "stopped")
 		} else {

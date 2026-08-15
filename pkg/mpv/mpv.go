@@ -9,6 +9,8 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,6 +18,12 @@ import (
 )
 
 type State = player.State
+
+// audioClientName is the name songer's mpv reports to the audio server
+// (--audio-client-name). It gives the stream a stable, unique identity so
+// we can find it with pactl and so it never shares WirePlumber's per-client
+// saved volume with a manually-launched "mpv".
+const audioClientName = "songer"
 
 type Player struct {
 	ctx      context.Context
@@ -40,6 +48,7 @@ func New(ctx context.Context, url, socket string, volume int) (*Player, error) {
 		"--terminal=no",
 		"--no-input-default-bindings",
 		"--input-ipc-server=" + socket,
+		"--audio-client-name=" + audioClientName,
 		"--volume=" + itoa(volume),
 		url,
 	}
@@ -102,6 +111,15 @@ func (p *Player) Start() error {
 	}
 
 	go p.readLoop()
+
+	// Some mpv builds (0.40 with ao_pipewire) keep the `volume` property as a
+	// decoupled software value and let the audio server's per-client restore
+	// own the real stream volume; if that restore is 0 the song plays silently
+	// even though mpv reports a healthy volume. Force it to match below.
+	p.mu.Lock()
+	vol := p.state.Volume
+	p.mu.Unlock()
+	p.ensureStreamVolume(vol)
 	return nil
 }
 
@@ -227,6 +245,7 @@ func (p *Player) SetVolume(v int) {
 		v = 100
 	}
 	_ = p.send(map[string]any{"command": []any{"set_property", "volume", v}})
+	p.applyStreamVolume(v)
 	p.mu.Lock()
 	p.state.Volume = v
 	p.mu.Unlock()
@@ -238,6 +257,84 @@ func (p *Player) Load(url string) {
 	p.state.Ended = false
 	p.mu.Unlock()
 	_ = p.send(map[string]any{"command": []any{"loadfile", url, "replace"}})
+}
+
+// EnsureStreamVolume retries until songer's mpv stream shows up in the audio
+// server, then sets its volume. Best-effort: returns when pactl is missing or
+// no matching stream appears within a few seconds.
+func EnsureStreamVolume(v int) {
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		if ApplyStreamVolume(v) {
+			return
+		}
+		if time.Now().After(deadline) {
+			return
+		}
+		time.Sleep(150 * time.Millisecond)
+	}
+}
+
+// ApplyStreamVolume sets the volume of songer's PulseAudio/PipeWire stream so
+// the audio that reaches the speakers matches the requested level. mpv's own
+// `volume` property is best-effort only: on some builds (ao_pipewire) it is a
+// decoupled software value overridden by the audio server's per-client
+// restore, and a restored 0% means literal silence. No-op (and harmless) when
+// pactl or a matching stream is absent, e.g. on a plain ALSA setup.
+func ApplyStreamVolume(v int) bool {
+	if _, err := exec.LookPath("pactl"); err != nil {
+		return true
+	}
+	id, ok := findSinkInput()
+	if !ok {
+		return false
+	}
+	_ = exec.Command("pactl", "set-sink-input-volume", strconv.Itoa(id), fmt.Sprintf("%d%%", v)).Run()
+	return true
+}
+
+// ensureStreamVolume retries until mpv's audio-server stream appears, then
+// sets its volume. Called once at startup (the sink-input may not exist yet
+// the instant the IPC socket is up).
+func (p *Player) ensureStreamVolume(v int) {
+	EnsureStreamVolume(v)
+}
+
+// applyStreamVolume sets the volume of mpv's PulseAudio/PipeWire sink-input.
+func (p *Player) applyStreamVolume(v int) bool {
+	return ApplyStreamVolume(v)
+}
+
+// findSinkInput locates the sink-input id of songer's mpv stream by scanning
+// `pactl list sink-inputs` for application.name == songer (set via
+// --audio-client-name). mpv does not advertise its pid to PulseAudio, so the
+// client name is the only stable handle.
+func findSinkInput() (int, bool) {
+	out, err := exec.Command("pactl", "list", "sink-inputs").Output()
+	if err != nil {
+		return 0, false
+	}
+	cur := -1
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if id, ok := parseSinkInputID(line); ok {
+			cur = id
+			continue
+		}
+		if cur >= 0 && strings.HasPrefix(line, "application.name") && strings.Contains(line, audioClientName) {
+			return cur, true
+		}
+	}
+	return 0, false
+}
+
+func parseSinkInputID(line string) (int, bool) {
+	const pre = "Sink Input #"
+	if !strings.HasPrefix(line, pre) {
+		return 0, false
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(line[len(pre):]))
+	return n, err == nil
 }
 
 func (p *Player) Close() {

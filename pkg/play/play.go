@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"songer/pkg/cmus"
+	"songer/pkg/mpv"
 	"songer/pkg/search"
 )
 
@@ -20,6 +21,7 @@ const statusPrefix = "SONGER_TIME "
 type Options struct {
 	Video   bool
 	Cmus    bool
+	Volume  int
 	OnStart func(time.Duration)
 }
 
@@ -48,6 +50,15 @@ func Play(ctx context.Context, video search.Video, opts Options) (*Session, erro
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
+
+	// On systems where mpv's `volume` property is decoupled from the audio
+	// server's stream volume (ao_pipewire builds), force the stream volume so
+	// a restored 0% can't silently mute playback.
+	vol := opts.Volume
+	if vol < 1 {
+		vol = 80
+	}
+	go mpv.EnsureStreamVolume(vol)
 
 	sess := &Session{Video: video}
 
@@ -130,6 +141,7 @@ func buildArgs(video search.Video, opts Options) []string {
 	if !opts.Video {
 		args = append(args, "--no-video")
 	}
+	args = append(args, "--audio-client-name=songer")
 	args = append(args, "--term-status-msg="+statusPrefix+"${playback-time}")
 	return append(args, video.URL)
 }
